@@ -1,0 +1,12 @@
+################################
+# Dune module information file #
+################################
+
+# Name of the module
+Module: masterarbeit
+Version: 1.0
+Maintainer: doesnt@exist.com
+# Required build dependencies
+Depends: dune-common dune-logging dune-geometry dune-uggrid dune-grid dune-localfunctions dune-istl dune-typetree dune-functions
+# Optional build dependencies
+#Suggests:
