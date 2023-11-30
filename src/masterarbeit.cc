@@ -5,6 +5,7 @@
 #include <dune/geometry/quadraturerules.hh>
 
 #include <dune/grid/uggrid.hh>
+#include <dune/grid/yaspgrid.hh>
 #include <dune/grid/io/file/gmshreader.hh>
 #include <dune/grid/io/file/vtk/vtkwriter.hh>
 
@@ -237,8 +238,10 @@ int main(int argc, char *argv[])
   //////////////////////////////////
 
   constexpr int dim = 2;
-  using Grid = UGGrid<dim>;
-  std::shared_ptr<Grid> grid = GmshReader<Grid>::read("l-shape.msh");
+  //~ using Grid = UGGrid<dim>;
+  //~ std::shared_ptr<Grid> grid = GmshReader<Grid>::read("l-shape.msh");
+  using Grid = YaspGrid<dim>;
+  auto grid = std::make_shared<Grid>( Dune::FieldVector<double,2>{0.5, 0.5}, std::array{10, 10} );
 
   grid->globalRefine(2);
 
