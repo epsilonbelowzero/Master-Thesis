@@ -12,6 +12,10 @@ find_package(dune-common REQUIRED)
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/modules"
   ${dune-common_MODULE_PATH})
 
+find_package(OpenMP REQUIRED)
+#~ find_package(GMP REQUIRED)
+find_package(Alberta REQUIRED)
+
 #include the dune macros
 include(DuneMacros)
 
@@ -24,6 +28,12 @@ add_subdirectory(src)
 add_subdirectory(dune)
 add_subdirectory(doc)
 add_subdirectory(cmake/modules)
+
+add_dune_alberta_flags(WORLDDIM 2 masterarbeit)
+if(OpenMP_FOUND)
+  target_link_libraries(masterarbeit PUBLIC OpenMP::OpenMP_CXX)
+endif()
+target_compile_options(masterarbeit PRIVATE -fconcepts)
 
 # finalize the dune project, e.g. generating config.h etc.
 finalize_dune_project(GENERATE_CONFIG_H_CMAKE)
