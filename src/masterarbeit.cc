@@ -1790,8 +1790,8 @@ int main(int argc, char *argv[])
   const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
   //~ const FieldMatrix<double, Dim, Dim> D = {{0,0},{0,0}};
   //~ const FieldMatrix<double, 2, 2> D = {{eps*2,eps*1},{eps*1,eps*3}};
-  //~ const FieldVector<double,Dim> beta = {2,1};
-  const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
+  const FieldVector<double,Dim> beta = {2,1};
+  //~ const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
   //~ const FieldVector<double,Dim> beta = {0,0};
   //~ const FieldVector<double,Dim> beta = {1,0};
   
@@ -1812,7 +1812,10 @@ int main(int argc, char *argv[])
 	auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { 2*PI*std::cos(2*PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(2*PI*coords[0])*std::cos(PI*coords[1]) }; };
   
-  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& coords){return f(coords)*eps/0.2/0.2*(-18+8*0.2+4*coords[0]-4*coords[0]*coords[0]+36*coords[1]-36*coords[1]) + beta*Df(coords)+mu*f(coords);};
+  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  const auto kappaUPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {2*(coords[0]-0.5),2*(coords[0]-0.5)}; };
+  const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
+  const auto kappaLPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {-2*(coords[0]-0.5), -2*(coords[0]-0.5)}; };
   
   if( argc < 5 ) {
 		std::cerr << argv[0] << " <Edges> <omega> <upper bound> <CIP-gamma>" << std::endl;
@@ -1941,6 +1944,16 @@ int main(int argc, char *argv[])
   //tweak symmetry accordingly if needed
   //~ storeMatrixMarket(stiffnessMatrix, "stiffness.mtx");
   //~ storeMatrixMarket(b, "stiffness-rhs.mtx");
+  
+  //prepare vectors for non-const bounds
+  Eigen::Matrix<double,Eigen::Dynamic,1> uKappaU(b.size());
+  Eigen::Matrix<double,Eigen::Dynamic,1> uKappaUPrime(b.size());
+  Eigen::Matrix<double,Eigen::Dynamic,1> uKappaL(b.size());
+  Eigen::Matrix<double,Eigen::Dynamic,1> uKappaLPrime(b.size());
+  Functions::interpolate(basis,uKappaU,kappaU);
+  Functions::interpolate(basis,uKappaUPrime, [=](const auto& coords) { const auto tmp = kappaUPrime(coords); double result; for(int i=0;i<coords.size();i++) result += coords[i]*tmp[i]; return result;});
+  Functions::interpolate(basis,uKappaL,kappaL);
+  Functions::interpolate(basis,uKappaLPrime, [=](const auto& coords) { const auto tmp = kappaLPrime(coords); double result; for(int i=0;i<coords.size();i++) result += coords[i]*tmp[i]; return result;});
 
   ///////////////////////////
   //   Compute solution
@@ -1988,7 +2001,6 @@ int main(int argc, char *argv[])
 	
 	//~ using FLTPrec = mpf_class;
 	std::cerr << "Transcribe to Eigen" << std::endl;
-	using FLTPrec = double;
 	auto [stiffnessEigen, RhsEigen] = transcribeDuneToEigen( stiffnessMatrix, Rhs, 85 ); //25 for occupation should be enough for all grids and lagrange elements up to 2
 	//~ Eigen::saveMarket(stiffnessEigen, "stiffness.mtx");
 	std::cerr << "Transcribe to Eigen End" << std::endl;
@@ -2048,11 +2060,11 @@ int main(int argc, char *argv[])
 	//~ //for newton-only testing
 	//~ return 0;
 	
-	//~ Eigen::SparseLU<Eigen::SparseMatrix<FLTPrec>> solverEigen;
+	//~ Eigen::SparseLU<Eigen::SparseMatrix<FltPrec>> solverEigen;
 	//~ solverEigen.analyzePattern(stiffnessEigen);
 	//~ solverEigen.factorize(stiffnessEigen);
-	//~ Eigen::Matrix<FLTPrec,Eigen::Dynamic,1> u = solverEigen.solve(RhsEigen);
-	//~ Eigen::Matrix<FLTPrec,Eigen::Dynamic,1> u(RhsEigen);
+	//~ Eigen::Matrix<FltPrec,Eigen::Dynamic,1> u = solverEigen.solve(RhsEigen);
+	//~ Eigen::Matrix<FltPrec,Eigen::Dynamic,1> u(RhsEigen);
 	//~ std::cout	<< std::setw(20) << "Eigen solution"
 						//~ << std::setw(20) << "Dune solution"
 						//~ << std::setw(20) << "Eigen-Dune"
