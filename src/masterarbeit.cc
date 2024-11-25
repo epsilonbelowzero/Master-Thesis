@@ -112,6 +112,8 @@ template < typename FltPrec >
 bool localOmegaAdaption( FltPrec& localOmega, const FltPrec errOld, const FltPrec errNew ) {
 	bool ret = false;
 	
+	//~ return false;
+	
 	constexpr char escape = 27;
 
 	if(errNew  > 0.5*errOld) {
@@ -304,7 +306,7 @@ template < class Basis >
 Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	const Basis& basis, 
 	const Dune::FieldMatrix< typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension >& D,
-	const Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension> beta,
+	const typename Basis::GridView::ctype betaInfinityNorm,
 	const typename Basis::GridView::ctype mu)
 {
 	//generate the s-Vector in 3 steps:
@@ -359,7 +361,7 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 		if(noParticipatingElems[i] == 0) continue;
 		
 		const FltPrec h_i = result[i] / noParticipatingElems[i];
-		result[i] = D.infinity_norm() + h_i * beta.infinity_norm() + h_i * h_i * mu;
+		result[i] = D.infinity_norm() + h_i * betaInfinityNorm + h_i * h_i * mu;
 	}
 	
 	//step 3
@@ -410,7 +412,7 @@ Eigen::Vector< FltPrec, Eigen::Dynamic > fixedpointMethod(
 {
 	std::cerr << "Fixedpoint Method with Eigen Interface" << std::endl;
 	
-	constexpr bool DoOutput = false;
+	constexpr bool DoOutput = true;
 	
 	Eigen::Vector<FltPrec,Eigen::Dynamic> oldB(Rhs),newB(Rhs);
 	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
@@ -592,7 +594,13 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 		std::cout << "\tUpdate Solution: " << std::chrono::duration<float,std::milli>(updateXEnd-updateXStart).count() << " ms." << std::endl;
 		
 		if constexpr (DoOutput) Output(x, std::ios::app | std::ios::ate, "output_u");
-		if constexpr (DoOutput) Output(uplus, std::ios::app | std::ios::ate, "output_uplus");
+		if constexpr (DoOutput) {
+			Vector tmpUPlus(x.size());
+			for( int i=0; i < tmpUPlus.size(); i++ ) {
+				tmpUPlus[i] = std::clamp(y[i],uKappaL[i],uKappaU[i]);
+			}
+			Output(tmpUPlus, std::ios::app | std::ios::ate, "output_uplus");
+		}
 	}
 	while( true );
 	const auto fixedpointEnd = std::chrono::high_resolution_clock::now();
@@ -950,22 +958,22 @@ template < typename VectorImpl, typename FltPrec, int Dim > requires IsEnumerata
 FltPrec sNorm(
 	const VectorImpl& u,
 	const Dune::FieldMatrix<FltPrec, Dim, Dim >& D,
-	const Dune::FieldVector<FltPrec, Dim> beta,
+	const FltPrec betaInfinityNorm,
 	const FltPrec mu,
 	const FltPrec H)
 {
-	return std::sqrt((D.infinity_norm() + beta.infinity_norm() * H + mu * H * H) * u.dot(u));
+	return std::sqrt((D.infinity_norm() + betaInfinityNorm * H + mu * H * H) * u.dot(u));
 }
 
 template < typename FltPrec, int Dim >
 FltPrec sNorm(
 	const Dune::BlockVector<FltPrec> u,
 	const Dune::FieldMatrix<FltPrec, Dim, Dim >& D,
-	const Dune::FieldVector<FltPrec, Dim> beta,
+	const FltPrec betaInfinityNorm,
 	const FltPrec mu,
 	const FltPrec H)
 {
-	return std::sqrt((D.infinity_norm() + beta.infinity_norm() * H + mu * H * H) * (u*u));
+	return std::sqrt((D.infinity_norm() + betaInfinityNorm * H + mu * H * H) * (u*u));
 }
 
 template < typename FltPrec, int MantissaLength=500 >
@@ -1026,7 +1034,7 @@ using namespace Dune;
 template < class Basis >
 void addCIP(const Basis& basis,
 						BCRSMatrix<typename Basis::GridView::ctype>& stiffnessMatrix,
-						const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension> beta,
+						const typename Basis::GridView::ctype betaInfinityNorm,
 						const typename Basis::GridView::ctype gamma)
 {
 	using FltPrec = typename Basis::GridView::ctype;
@@ -1034,14 +1042,14 @@ void addCIP(const Basis& basis,
 	const auto action = [&stiffnessMatrix](const int globalI,const int globalJ, const FltPrec contrib) {
 		stiffnessMatrix[globalI][globalJ] += contrib;
 	};
-	addCIPImpl(basis,action,beta,gamma);
+	addCIPImpl(basis,action,betaInfinityNorm,gamma);
 }
 
 template < class Basis, typename VectorImpl > requires IsEnumeratable<VectorImpl>
 typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 								const VectorImpl& u,
 								const Dune::FieldMatrix< typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension >& D,
-								const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension> beta,
+								const typename Basis::GridView::ctype betaInfinityNorm,
 								const typename Basis::GridView::ctype mu,
 								const typename Basis::GridView::ctype gamma,
 								const std::function<double(Dune::FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>)> f,
@@ -1061,7 +1069,7 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 	const auto action = [&u,&result](const int globalI,const int globalJ, const FltPrec contrib) {
 		result += u[globalI] * u[globalJ] * contrib;
 	};
-	addCIPImpl(basis,action,beta,gamma);
+	addCIPImpl(basis,action,betaInfinityNorm,gamma);
 	//~ std::cout << "\t" << "CIP-Addition:" << std::endl
 						//~ << "\t" << "\t" << "NaN-Check = " << std::isnan(result) << std::endl
 						//~ << "\t" << "\t" << "infinity check = " << std::isinf(result) << std::endl
@@ -1089,14 +1097,14 @@ template < class Basis >
 void addCIPImpl(const Basis& basis,
 						//~ BCRSMatrix<typename Basis::GridView::ctype>& stiffnessMatrix,
 						const std::function<void(const int,const int,const typename Basis::GridView::ctype)> action,
-						const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension> beta,
+						const typename Basis::GridView::ctype betaInfinityNorm,
 						const typename Basis::GridView::ctype gamma)
 {
 	using FltPrec = typename Basis::GridView::ctype;
 	constexpr int DomainDim = Basis::GridView::dimension;
 	
-	const auto evaluateIntegrand = [gamma,beta](const FltPrec h_F, const FieldVector<FltPrec,DomainDim> diffIn, const FieldVector<FltPrec,DomainDim> diffOut) -> FltPrec {
-		return gamma *beta.infinity_norm() * (h_F*h_F) * (diffIn*diffOut);
+	const auto evaluateIntegrand = [gamma,betaInfinityNorm](const FltPrec h_F, const FieldVector<FltPrec,DomainDim> diffIn, const FieldVector<FltPrec,DomainDim> diffOut) -> FltPrec {
+		return gamma *betaInfinityNorm * (h_F*h_F) * (diffIn*diffOut);
 	};
 	
 	const auto gridView = basis.gridView();
@@ -1274,7 +1282,12 @@ template<class LocalView, class Matrix, class Precision = typename Matrix::block
 void assembleElementStiffnessMatrix(const LocalView& localView,
                                     Matrix& elementMatrix,
                                     const FieldMatrix<Precision, LocalView::Element::dimension, LocalView::Element::dimension> D,
-                                    const FieldVector<Precision, LocalView::Element::dimension> beta,
+                                    const std::function<
+																						FieldVector<Precision, LocalView::Element::dimension>(
+																							FieldVector<Precision, LocalView::Element::dimension>
+																						)
+																					> beta,
+																		const Precision betaInfinityNorm,
                                     const Precision mu)
 {
   using Element = typename LocalView::Element;
@@ -1329,6 +1342,8 @@ void assembleElementStiffnessMatrix(const LocalView& localView,
     std::vector<FieldVector<Precision, 1>> shapeFunctionValues;  
     localFiniteElement.localBasis().evaluateFunction(quadPos, shapeFunctionValues);
     
+    const auto localBeta = beta(element.geometry().global(quadPos));
+    
     // Compute the actual matrix entries
     for (size_t p=0; p<elementMatrix.N(); p++)
     {
@@ -1342,7 +1357,7 @@ void assembleElementStiffnessMatrix(const LocalView& localView,
         //In the convection term, p and q seem to be inverted, but rightful. Reason: p is the loop over the Rows, q over the columns. When turning the weak formulation into a
         //linear system, it starts with a(u,p_j) = a(\sum_i u_i p_i,p_j) = \sum_i u_i a(p_i,p_j), i.e. the columns are in the first argument, the rows in the second. This 
         //convention needs to be adapted.
-        elementMatrix[localRow][localCol] += (Dgradients[p] * gradients[q] + (beta * gradients[q]) * shapeFunctionValues[p] + mu *  shapeFunctionValues[p] * shapeFunctionValues[q])
+        elementMatrix[localRow][localCol] += (Dgradients[p] * gradients[q] + (localBeta * gradients[q]) * shapeFunctionValues[p] + mu *  shapeFunctionValues[p] * shapeFunctionValues[q])
                                     * quadPoint.weight() * integrationElement;
       }
     }
@@ -1445,21 +1460,26 @@ void getOccupationPattern(const Basis& basis, MatrixIndexSet& nb)
 template<typename Basis, typename Element>
 void processElement(const Basis& basis,
 														Element& element,
-                            BCRSMatrix<double>& matrix,
-                            BlockVector<double>& b,
+                            BCRSMatrix<typename Basis::GridView::ctype>& matrix,
+                            BlockVector<typename Basis::GridView::ctype>& b,
                             const std::function<
-                                double(FieldVector<double,
+                                typename Basis::GridView::ctype(FieldVector<typename Basis::GridView::ctype,
                                                    Basis::GridView::dimension>)
                                                > volumeTerm, 
-                            const FieldMatrix<double, Basis::GridView::dimension, Basis::GridView::dimension> D,
-                            const FieldVector<double, Basis::GridView::dimension> beta,
-                            const double mu)
+                            const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension> D,
+                            const std::function<
+																		FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>(
+																			FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
+																		)
+																> beta,
+														const typename Basis::GridView::ctype betaInfinityNorm,
+                            const typename Basis::GridView::ctype mu)
 {
 	auto localView = basis.localView();
 	localView.bind(element);
 
-	Matrix<double> elementMatrix;
-	assembleElementStiffnessMatrix(localView, elementMatrix, D, beta, mu);
+	Matrix<typename Basis::GridView::ctype> elementMatrix;
+	assembleElementStiffnessMatrix(localView, elementMatrix, D, beta, betaInfinityNorm, mu);
 
 	for(size_t p=0; p<elementMatrix.N(); p++)
 	{
@@ -1476,7 +1496,7 @@ void processElement(const Basis& basis,
 	}
 
 	// Now get the local contribution to the right-hand side vector
-	BlockVector<double> localB;
+	BlockVector<typename Basis::GridView::ctype> localB;
 	assembleElementVolumeTerm(localView, localB, volumeTerm);
 
 	for (size_t p=0; p<localB.size(); p++)
@@ -1490,15 +1510,20 @@ void processElement(const Basis& basis,
 
 template<class Basis>
 void assembleProblem(const Basis& basis,
-                            BCRSMatrix<double>& matrix,
-                            BlockVector<double>& b,
+                            BCRSMatrix<typename Basis::GridView::ctype>& matrix,
+                            BlockVector<typename Basis::GridView::ctype>& b,
                             const std::function<
-                                double(FieldVector<double,
+                                const typename Basis::GridView::ctype(const FieldVector<typename Basis::GridView::ctype,
                                                    Basis::GridView::dimension>)
                                                > volumeTerm, 
-                            const FieldMatrix<double, Basis::GridView::dimension, Basis::GridView::dimension> D,
-                            const FieldVector<double, Basis::GridView::dimension> beta,
-                            const double mu)
+                            const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension> D,
+                            const std::function<
+																		const FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>(
+																			const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
+																		)
+																	> beta,
+                            const typename Basis::GridView::ctype betaInfinityNorm,
+                            const typename Basis::GridView::ctype mu)
 {
   auto gridView = basis.gridView();
 
@@ -1543,8 +1568,8 @@ void assembleProblem(const Basis& basis,
 	{
 		for(auto element = gridView.template begin<0>(); element != LastElement; element++)
 		//~ {
-			#pragma omp task default(none) firstprivate(element) shared(D,beta,mu,matrix,b,basis,volumeTerm)
-				processElement( basis, *element,matrix,b,volumeTerm,D,beta,mu );
+			#pragma omp task default(none) firstprivate(element) shared(D,betaInfinityNorm,mu,matrix,b,basis,beta,volumeTerm)
+				processElement( basis, *element,matrix,b,volumeTerm,D,beta, betaInfinityNorm,mu );
 			// Now let's get the element stiffness matrix
 			// A dense matrix is used for the element stiffness matrix
 			//~ localView.bind(element);
@@ -1751,15 +1776,20 @@ int main(int argc, char *argv[])
   const double PI = StandardMathematicalConstants<double>::pi();
   constexpr int Dim = 2;//\Omega\subset\mathbb R^{dim}, \Omega=(0,1)^2 (see below, other sets may not work)
 
-  const double mu = 1;
-  //~ const double mu = 0;
+  //~ const double mu = 1;
+  const double mu = 0;
   const double eps = 1e-5;
   //~ const double eps = std::atof(argv[5]);
   //~ const double eps = 0.6;
   const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
   //~ const FieldMatrix<double, Dim, Dim> D = {{0,0},{0,0}};
   //~ const FieldMatrix<double, 2, 2> D = {{eps*2,eps*1},{eps*1,eps*3}};
-  const FieldVector<double,Dim> beta = {2,1};
+  const double betaInfinityNorm = 1;
+  //ex. 5.2 (opaper_followup)
+  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {-x[1],x[0]}; };
+  //ex. 5.3 (opaper_followup)
+  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
+  //~ const FieldVector<double,Dim> beta = {2,1};
   //~ const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
   //~ const FieldVector<double,Dim> beta = {0,0};
   //~ const FieldVector<double,Dim> beta = {1,0};
@@ -1771,8 +1801,9 @@ int main(int argc, char *argv[])
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (5.0*PI*PI*eps + mu) * sin(2*PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return eps*5*PI*PI*sin(PI*x[0])*sin(PI*x[1])-eps*2*PI*PI*cos(PI*x[0])*cos(PI*x[1])+mu*sin(PI*x[0])*sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 2*PI*cos(PI*x[0])*sin(PI*x[1])+PI*sin(PI*x[0])*cos(PI*x[1]);};
-  auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
-  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
+  //~ #warning "Usage of beta in the sourceTerm only works for constant convection!"
+  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
+  auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
   
 	//~ auto const f = [=] (const auto& coords) { return exp(-std::pow(coords[0]-0.5,2)/0.2-3*std::pow(coords[1]-0.5,2)/0.2); };
 	auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
@@ -1781,10 +1812,10 @@ int main(int argc, char *argv[])
 	auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { 2*PI*std::cos(2*PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(2*PI*coords[0])*std::cos(PI*coords[1]) }; };
   
-  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
-  const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
-  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 0.5; };
-  //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return 0; };
+  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
+  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 1; };
+  const auto kappaL = [=] (const FieldVector<double,2>& coords) { return 0; };
   
   if( argc < 4 ) {
 		std::cerr << argv[0] << " <Edges> <omega> <CIP-gamma>" << std::endl;
@@ -1827,8 +1858,6 @@ int main(int argc, char *argv[])
 	};
 	const double Diameter = diameter(gridView.begin<0>()->geometry());
   
-  const double sFactor = D.infinity_norm() + beta.infinity_norm() * Diameter + mu * std::pow(Diameter, 2.0);
-  
   std::cerr << "||H = " << H << std::endl;
   gridlayoutToFile( gridView, H );
   
@@ -1852,27 +1881,29 @@ int main(int argc, char *argv[])
   
   std::cout << "Testing getSVector:" << std::endl;
   const auto sVectorStart = std::chrono::high_resolution_clock::now();
-  const auto sVector = getSVector( basis, D, beta, mu );
+  const auto sVector = getSVector( basis, D, betaInfinityNorm, mu );
   const auto sVectorEnd = std::chrono::high_resolution_clock::now();
   const auto uniformityCheck = [](const BlockVector<double>& vec) { bool result=true; for(int i=1;i<vec.size();i++) { if(std::abs(vec[i]-vec[i-1])>=1e-5) { result=false;break;}} return result;};
-  std::cout << "\tTest 1: max element vs. Diameter: " << *std::max_element(sVector.begin(),sVector.end()) << " vs. " << (Diameter*Diameter*mu+Diameter*beta.infinity_norm()+D.infinity_norm()) << std::endl;
+  std::cout << "\tTest 1: max element vs. Diameter: " << *std::max_element(sVector.begin(),sVector.end()) << " vs. " << (Diameter*Diameter*mu+Diameter*betaInfinityNorm+D.infinity_norm()) << std::endl;
   std::cout << "\tTest 2: min element: " << *std::min_element(sVector.begin(),sVector.end()) << std::endl;
   std::cout << "\tTest 3: uniformity: " << (uniformityCheck(sVector) ? "yes" : "no" ) << std::endl;
   std::cout << "Time for generation: " << std::chrono::duration<float,std::milli>(sVectorEnd-sVectorStart).count() << " ms." << std::endl;
 
   std::cerr << "Assemble Problem" << std::endl;
-  assembleProblem(basis, stiffnessMatrix, b, sourceTerm, D, beta, mu);
+  assembleProblem(basis, stiffnessMatrix, b, sourceTerm, D, beta, betaInfinityNorm, mu);
   std::cerr << "Assemble Problem End" << std::endl;
   
   const auto stiffnessMatrixBeforeCIP = std::get<0>(transcribeDuneToEigen( stiffnessMatrix, b, 85 ));
-  addCIP(basis,stiffnessMatrix,beta,gamma);
+  addCIP(basis,stiffnessMatrix,betaInfinityNorm,gamma);
 	const auto stiffnessMatrixAfterCIP = std::get<0>(transcribeDuneToEigen( stiffnessMatrix, b, 85 ));
 
   // Determine Dirichlet dofs by marking all degrees of freedom whose Lagrange nodes
   // comply with a given predicate.
-  auto predicate = [](auto x)
+  auto predicate = [](const auto x)
   {
-		const bool ret = 1e-5 > x[0] || x[0] > 0.99999 || 1e-5 > x[1] || x[1] > 0.99999;
+		const bool ret = 1e-5 > x[0] || x[0] > 0.99999 || 1e-5 > x[1] || x[1] > 0.99999; //everywhere
+		//ex. 5.2
+		//~ const bool ret = x[0] > 0.99999 || 1e-5 > x[1];
     return ret;
   };
 
@@ -1898,9 +1929,26 @@ int main(int argc, char *argv[])
   }
 
   // Set Dirichlet values
-  auto dirichletValues = [](auto x)
+  auto dirichletValues = [](const auto x) -> const double
   {
-    return 0;
+    //~ return 0;
+    //ex. 5.2 (opaper_followup)
+    //~ if( x[0] < 0.333333 and x[1] < 1e-5) {
+			//~ return 0;
+		//~ }
+		//~ else if ( 0.333333 < x[0] and x[0] < 0.6666667 and x[1] < 1e-5) {
+			//~ return 0.5;
+		//~ }
+		//~ else {
+			//~ return 1;
+		//~ }
+		//ex. 5.3 (opaper_followup)
+		if( x[0] < 1e-5 or x[1] > 0.9999) {
+			return 1;
+		}
+		else {
+			return 0;
+		}
   };
   Functions::interpolate(basis,b,dirichletValues, dirichletNodes);
     
@@ -2019,28 +2067,11 @@ int main(int argc, char *argv[])
 	std::cerr << "H = " << H << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, beta, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), D,beta,mu,Diameter) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), D,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//~ //for newton-only testing
 	//~ return 0;
-	
-	//~ Eigen::SparseLU<Eigen::SparseMatrix<FltPrec>> solverEigen;
-	//~ solverEigen.analyzePattern(stiffnessEigen);
-	//~ solverEigen.factorize(stiffnessEigen);
-	//~ Eigen::Matrix<FltPrec,Eigen::Dynamic,1> u = solverEigen.solve(RhsEigen);
-	//~ Eigen::Matrix<FltPrec,Eigen::Dynamic,1> u(RhsEigen);
-	//~ std::cout	<< std::setw(20) << "Eigen solution"
-						//~ << std::setw(20) << "Dune solution"
-						//~ << std::setw(20) << "Eigen-Dune"
-						//~ << std::endl;
-	//~ for( int i=0; i < x.size(); i++ ) {
-		//~ std::cout	
-							//~ << std::setw(20) << u[i]
-							//~ << std::setw(20) << x[i]
-							//~ << std::setw(20) << (u[i]-x[i])
-							//~ << std::endl;
-	//~ }
 	
 	//-----------
 	Eigen::Vector<double,Eigen::Dynamic> eigenX = fixedpointMethod( u0, stiffnessEigen, RhsEigen, omega, eigenSVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
@@ -2048,15 +2079,14 @@ int main(int argc, char *argv[])
 	std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
 	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
 	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), D, beta, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), D,beta,mu,Diameter) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), D,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
-	const auto normalSolution(x);
 	
-	std::cerr << "||normalsolution-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), normalSolution, f ) << std::endl;
+	//~ std::cerr << "||normalsolution-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), normalSolution, f ) << std::endl;
 	
-	x = fixedpointMethod( normalSolution, stiffnessMatrix, Rhs, omega, sVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
+	x = fixedpointMethod( x, stiffnessMatrix, Rhs, omega, sVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
 	Vector uplus(x.size()), uminus(x.size());
 	
 	for( int i = 0; i < x.size(); i++ ) {
@@ -2066,33 +2096,31 @@ int main(int argc, char *argv[])
 	
 	//--------------
 	//some norms
-	{	
-		std::cerr << "||u_0-f||_2: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), normalSolution, f) << std::endl;
+	std::cerr << "||u_0-f||_2: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), x, f) << std::endl;
+
+	std::cerr << "||u_N-f||_2 = " << L2Norm<double>( gridView, basis.localView(), x, f) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_L2 = " << L2Norm<double>( gridView, basis.localView(), uplus, f) << std::endl;
 	
-		std::cerr << "||u_N-f||_2 = " << L2Norm<double>( gridView, basis.localView(), x, f) << std::endl;
-		std::cerr << "(Richard|Dune) ||u^+-f||_L2 = " << L2Norm<double>( gridView, basis.localView(), uplus, f) << std::endl;
-		
-		auto const ANormMaybeWorking = [&](BCRSMatrix<double>& A, BlockVector<double> u) { BlockVector<double> _tmp(u.size()); A.mv(u,_tmp); return std::sqrt(u*_tmp); };
-		BlockVector<double> tmp;
-		Functions::interpolate(basis,tmp,f);
-		tmp -= uplus;
-		
-		std::cerr << "(Richard|Dune) ||u^+-u_0||_A = " << ANormMaybeWorking( stiffnessMatrix, tmp) << std::endl;
-		std::cerr << "(Richard|Dune) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), uplus, D, mu, f, Df ) << std::endl;
-		std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, D, beta, mu, gamma, f, Df ) << std::endl;
-		std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, D,beta,mu,Diameter) << std::endl;
-		
-		BlockVector<double> tmp2(Rhs), tmp3(Rhs.size());
-		stiffnessMatrix.mv(uplus, tmp3);
-		tmp2 -= tmp3;
-		for( int i = 0; i < tmp2.size(); i++ ) {
-			tmp2[i] -= (eps + + beta.infinity_norm() * H + 1.0 * std::pow(Diameter, 2.0)) * uminus[i];
-		}
-		std::cerr << "||Rhs - Auplus - s(uminus)||_\\infty = " << std::get<0>(inftyNorm(tmp2)) << std::endl;
-		
-		Eigen::Vector<double,Eigen::Dynamic> duneXtranscribed = ([](const auto& u){ Eigen::Vector<double,Eigen::Dynamic> tmp(u.size()); for( int i=0; i<u.size();i++ ) tmp[i]=u[i]; return tmp; })(x);
-		//~ std::cerr << "||u^+_eigen - u^+_dune||_L2 = " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix()-duneXtranscribed.array().min(uKappaU).max(uKappaL).matrix() ) << std::endl;
+	auto const ANormMaybeWorking = [&](BCRSMatrix<double>& A, BlockVector<double> u) { BlockVector<double> _tmp(u.size()); A.mv(u,_tmp); return std::sqrt(u*_tmp); };
+	BlockVector<double> tmp;
+	Functions::interpolate(basis,tmp,f);
+	tmp -= uplus;
+	
+	std::cerr << "(Richard|Dune) ||u^+-u_0||_A = " << ANormMaybeWorking( stiffnessMatrix, tmp) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), uplus, D, mu, f, Df ) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, D,betaInfinityNorm,mu,Diameter) << std::endl;
+	
+	BlockVector<double> tmp2(Rhs), tmp3(Rhs.size());
+	stiffnessMatrix.mv(uplus, tmp3);
+	tmp2 -= tmp3;
+	for( int i = 0; i < tmp2.size(); i++ ) {
+		tmp2[i] -= (eps + + betaInfinityNorm * H + 1.0 * std::pow(Diameter, 2.0)) * uminus[i];
 	}
+	std::cerr << "||Rhs - Auplus - s(uminus)||_\\infty = " << std::get<0>(inftyNorm(tmp2)) << std::endl;
+	
+	Eigen::Vector<double,Eigen::Dynamic> duneXtranscribed = ([](const auto& u){ Eigen::Vector<double,Eigen::Dynamic> tmp(u.size()); for( int i=0; i<u.size();i++ ) tmp[i]=u[i]; return tmp; })(x);
+	//~ std::cerr << "||u^+_eigen - u^+_dune||_L2 = " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix()-duneXtranscribed.array().min(uKappaU).max(uKappaL).matrix() ) << std::endl;
 	
 	return 0;
 }
