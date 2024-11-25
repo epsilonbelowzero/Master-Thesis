@@ -410,7 +410,7 @@ Eigen::Vector< FltPrec, Eigen::Dynamic > fixedpointMethod(
 {
 	std::cerr << "Fixedpoint Method with Eigen Interface" << std::endl;
 	
-	constexpr bool DoOutput = true;
+	constexpr bool DoOutput = false;
 	
 	Eigen::Vector<FltPrec,Eigen::Dynamic> oldB(Rhs),newB(Rhs);
 	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
@@ -610,20 +610,18 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	const Eigen::Vector<FltPrec,Eigen::Dynamic>& u0,
 	const Eigen::Vector<FltPrec,Eigen::Dynamic>& sVector,
 	const FltPrec Diameter,
-	const Eigen::Array<FltPrec,Eigen::Dynamic,1> uKappaU, //upper bounds at each Lagrange node and it's derivative, same for lower bounds
-	const Eigen::Array<FltPrec,Eigen::Dynamic,1> uKappaUPrime,
+	const Eigen::Array<FltPrec,Eigen::Dynamic,1> uKappaU, //upper bounds at each Lagrange node
 	const Eigen::Array<FltPrec,Eigen::Dynamic,1> uKappaL,
-	const Eigen::Array<FltPrec,Eigen::Dynamic,1> uKappaLPrime,
 	const auto normFunc
 	)
 {
 	constexpr bool nanCheck = false;
 	constexpr bool conditionNumberCheck = false;
 	constexpr bool solveableCheck = false;
-	constexpr bool doOutput = false;
+	constexpr bool doOutput = true;
 	constexpr bool doDurations = false;
 	
-	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0.size());
+	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
 	//~ const auto Identity = Eigen::Matrix<FltPrec,Eigen::Dynamic,Eigen::Dynamic>::Identity(b.size(),b.size());
 	auto bouligand = Eigen::DiagonalMatrix<FltPrec,Eigen::Dynamic>(b.size());
 	//~ Eigen::BiCGSTAB<Eigen::SparseMatrix<FltPrec,Eigen::RowMajor> > solver;
@@ -659,16 +657,8 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 		const auto updateBouligand = std::chrono::high_resolution_clock::now();
 		nanCheck and std::cout << "\t\tNaN Check 1: " << u.hasNaN() << std::endl;
 		for( int i = 0; i < u.size(); i++ ) {
-			//for constant bounds:
-			//~ if( u[i] < -std::numeric_limits<FltPrec>::epsilon() || u[i] > kappa+std::numeric_limits<FltPrec>::epsilon() ) {
-				//~ bouligand.diagonal()[i] = 0;
-			//~ }
-			//for non-const bounds:
-			if( u[i] < uKappaL[i]-std::numeric_limits<FltPrec>::epsilon() ) {
-				bouligand.diagonal()[i] = uKappaLPrime[i];
-			}
-			else if (u[i] > uKappaU[i]+std::numeric_limits<FltPrec>::epsilon() ) {
-				bouligand.diagonal()[i] = uKappaUPrime[i];
+			if( u[i] < uKappaL[i]-std::numeric_limits<FltPrec>::epsilon() || u[i] > uKappaU[i]+std::numeric_limits<FltPrec>::epsilon() ) {
+				bouligand.diagonal()[i] = 0;
 			}
 			//switch from bouligand to clark?
 			//~ if( 	(0-std::numeric_limits<FltPrec>::epsilon() < u[i] && u[i] < 0+std::numeric_limits<FltPrec>::epsilon()) 
@@ -1791,14 +1781,10 @@ int main(int argc, char *argv[])
 	auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { 2*PI*std::cos(2*PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(2*PI*coords[0])*std::cos(PI*coords[1]) }; };
   
-  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2) + 0.5; };
-  //~ const auto kappaUPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {2*(coords[0]-0.5),2*(coords[0]-0.5)}; };
-  //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
-  //~ const auto kappaLPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {-2*(coords[0]-0.5), -2*(coords[0]-0.5)}; };
-  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 0.5; };
-  const auto kappaUPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {0,0}; };
-  const auto kappaL = [=] (const FieldVector<double,2>& coords) { return 0; };
-  const auto kappaLPrime = [=] (const auto& coords) -> Eigen::Matrix<double,2,1> { return {0,0}; };
+  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
+  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 0.5; };
+  //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return 0; };
   
   if( argc < 4 ) {
 		std::cerr << argv[0] << " <Edges> <omega> <CIP-gamma>" << std::endl;
@@ -1806,7 +1792,6 @@ int main(int argc, char *argv[])
 	}
   const unsigned int edges = std::atoi(argv[1]);
   const double omega = std::atof(argv[2]);
-  //~ const double UpperBound = std::atof(argv[3]);
   const double gamma = std::atof(argv[3]);
   
   std::cerr << "Configuration: " << std::endl
@@ -1929,13 +1914,9 @@ int main(int argc, char *argv[])
   
   //prepare vectors for non-const bounds
   Eigen::Array<double,Eigen::Dynamic,1> uKappaU(b.size());
-  Eigen::Array<double,Eigen::Dynamic,1> uKappaUPrime(b.size());
   Eigen::Array<double,Eigen::Dynamic,1> uKappaL(b.size());
-  Eigen::Array<double,Eigen::Dynamic,1> uKappaLPrime(b.size());
   Functions::interpolate(basis,uKappaU,kappaU);
-  Functions::interpolate(basis,uKappaUPrime, [=](const auto& coords) { const auto tmp = kappaUPrime(coords); double result; for(int i=0;i<coords.size();i++) result += coords[i]*tmp[i]; return result;});
   Functions::interpolate(basis,uKappaL,kappaL);
-  Functions::interpolate(basis,uKappaLPrime, [=](const auto& coords) { const auto tmp = kappaLPrime(coords); double result; for(int i=0;i<coords.size();i++) result += coords[i]*tmp[i]; return result;});
   
   outputVector<double>(basis,uKappaU);
 
@@ -2030,16 +2011,16 @@ int main(int argc, char *argv[])
 	const auto OutputMethodBind = [&basis](const auto& u, const std::ios::openmode mode, const std::string filename) { return outputVector<double>( basis, u, mode, filename ); };
 	
 	//Newton-Method
-	//~ const auto newtonStart = std::chrono::high_resolution_clock::now();
-	//~ Eigen::Vector<double,Eigen::Dynamic> eigenU
-		//~ = newtonMethod<double>( basis, stiffnessEigen, RhsEigen, u0, eigenSVector,Diameter, uKappaU, uKappaUPrime, uKappaL, uKappaLPrime, L2NormBind );
-	//~ const auto newtonEnd = std::chrono::high_resolution_clock::now();
-	//~ std::cerr << "\tTook " << std::chrono::duration<float,std::milli>(newtonEnd-newtonStart).count() << " ms." << std::endl;
-	//~ std::cerr << "H = " << H << std::endl;
-	//~ std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
-	//~ std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
-	//~ std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, beta, mu, gamma, f, Df ) << std::endl;
-	//~ std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), D,beta,mu,Diameter) << std::endl;
+	const auto newtonStart = std::chrono::high_resolution_clock::now();
+	Eigen::Vector<double,Eigen::Dynamic> eigenU
+		= newtonMethod<double>( basis, stiffnessEigen, RhsEigen, u0, eigenSVector,Diameter, uKappaU, uKappaL, L2NormBind );
+	const auto newtonEnd = std::chrono::high_resolution_clock::now();
+	std::cerr << "\tTook " << std::chrono::duration<float,std::milli>(newtonEnd-newtonStart).count() << " ms." << std::endl;
+	std::cerr << "H = " << H << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, beta, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), D,beta,mu,Diameter) << std::endl;
 	
 	//~ //for newton-only testing
 	//~ return 0;
