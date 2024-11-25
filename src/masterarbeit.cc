@@ -305,7 +305,7 @@ bool localOmegaAdaption( FltPrec& localOmega, const FltPrec errOld, const FltPre
 template < class Basis >
 Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	const Basis& basis, 
-	const Dune::FieldMatrix< typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension >& D,
+	const typename Basis::GridView::ctype diffusionInfinityNorm,
 	const typename Basis::GridView::ctype betaInfinityNorm,
 	const typename Basis::GridView::ctype mu)
 {
@@ -361,7 +361,7 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 		if(noParticipatingElems[i] == 0) continue;
 		
 		const FltPrec h_i = result[i] / noParticipatingElems[i];
-		result[i] = D.infinity_norm() + h_i * betaInfinityNorm + h_i * h_i * mu;
+		result[i] = diffusionInfinityNorm + h_i * betaInfinityNorm + h_i * h_i * mu;
 	}
 	
 	//step 3
@@ -780,16 +780,22 @@ void gridlayoutToFile( const GridView& gridView, const double H, const std::stri
 	gridLayout.close();
 }
 
-template < typename FltPrec, typename LocalView, typename GridView, typename VectorImpl > requires IsEnumeratable<VectorImpl>
-FltPrec ANorm( const GridView& gridView, LocalView localView,
+template < typename LocalView, typename GridView, typename VectorImpl > requires IsEnumeratable<VectorImpl>
+typename GridView::ctype ANorm( const GridView& gridView, LocalView localView,
 	const VectorImpl& u,
-	const Dune::FieldMatrix< FltPrec, LocalView::Element::dimension, LocalView::Element::dimension >& D,
-	const FltPrec mu,
-	const std::function<double(Dune::FieldVector<double,LocalView::Element::dimension>)> f,
-	const std::function<Dune::FieldVector<double,LocalView::Element::dimension>(const Dune::FieldVector<double,LocalView::Element::dimension>)> Df
+	 const std::function<
+					Dune::FieldMatrix<typename GridView::ctype, GridView::dimension, GridView::dimension>(
+						const Dune::FieldVector<typename GridView::ctype, GridView::dimension>
+					)
+				> diffusion,
+	const typename GridView::ctype diffusionInfinityNorm,
+	const typename GridView::ctype mu,
+	const std::function<typename GridView::ctype(Dune::FieldVector<typename GridView::ctype,GridView::dimension>)> f,
+	const std::function<Dune::FieldVector<typename GridView::ctype,GridView::dimension>(const Dune::FieldVector<typename GridView::ctype,GridView::dimension>)> Df
 )
 {
 	constexpr int dim = LocalView::Element::dimension;
+	using FltPrec = typename GridView::ctype;
 	
 	FltPrec aNorm = 0;
 	
@@ -829,7 +835,8 @@ FltPrec ANorm( const GridView& gridView, LocalView localView,
 			}
 			gradSum -= Df( elem.geometry().global(quadPos) );
 			Dune::FieldVector<FltPrec,dim> dGradSum;
-			D.mv( gradSum, dGradSum );
+			const Dune::FieldMatrix<FltPrec,dim,dim> localD = diffusion(elem.geometry().global(quadPos));
+			localD.mv( gradSum, dGradSum );
 			
 			aNorm += quadPoint.weight() * integrationElement * ( dGradSum * gradSum + mu * std::pow(shapeFunctionSum - functionValue,2) );
 		}
@@ -954,15 +961,15 @@ FltPrec L2Norm( GridView gridView, LocalView localView, const VectorImpl u,
 //Eigen uses expression templates and therefore the appropriate call uses this version; const Eigen::Vector<FltPrec,Eigen::Dynamic> u doesn't work for this reason
 //other possible solution: call .eval() on the corresponding vector before calling this function and use Eigen::Vector as type instead.
 //due to more specialisation, dune-vectors use the function overload below
-template < typename VectorImpl, typename FltPrec, int Dim > requires IsEnumeratable<VectorImpl>
+template < typename VectorImpl, typename FltPrec > requires IsEnumeratable<VectorImpl>
 FltPrec sNorm(
 	const VectorImpl& u,
-	const Dune::FieldMatrix<FltPrec, Dim, Dim >& D,
+	const FltPrec diffusionInfinityNorm,
 	const FltPrec betaInfinityNorm,
 	const FltPrec mu,
 	const FltPrec H)
 {
-	return std::sqrt((D.infinity_norm() + betaInfinityNorm * H + mu * H * H) * u.dot(u));
+	return std::sqrt((diffusionInfinityNorm + betaInfinityNorm * H + mu * H * H) * u.dot(u));
 }
 
 template < typename FltPrec, int Dim >
@@ -1048,7 +1055,12 @@ void addCIP(const Basis& basis,
 template < class Basis, typename VectorImpl > requires IsEnumeratable<VectorImpl>
 typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 								const VectorImpl& u,
-								const Dune::FieldMatrix< typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension >& D,
+								const std::function<
+												typename Dune::FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension>(
+													typename Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
+												)
+											> diffusion,
+								const typename Basis::GridView::ctype diffusionInfinityNorm,
 								const typename Basis::GridView::ctype betaInfinityNorm,
 								const typename Basis::GridView::ctype mu,
 								const typename Basis::GridView::ctype gamma,
@@ -1060,7 +1072,7 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 	using FltPrec = typename Basis::GridView::ctype;
 	
 	//~ std::cout << "CIP-Norm" << std::endl;
-	FltPrec result = std::pow(ANorm(basis.gridView(),basis.localView(),u,D,mu,f,Df),2);
+	FltPrec result = std::pow(ANorm(basis.gridView(),basis.localView(),u,diffusion,diffusionInfinityNorm,mu,f,Df),2);
 	//~ std::cout << "\t" << "A-Norm:" << std::endl
 						//~ << "\t" << "\t" << "NaN-Check = " << std::isnan(result) << std::endl
 						//~ << "\t" << "\t" << "infinity check = " << std::isinf(result) << std::endl
@@ -1281,7 +1293,12 @@ void addCIPImpl(const Basis& basis,
 template<class LocalView, class Matrix, class Precision = typename Matrix::block_type>
 void assembleElementStiffnessMatrix(const LocalView& localView,
                                     Matrix& elementMatrix,
-                                    const FieldMatrix<Precision, LocalView::Element::dimension, LocalView::Element::dimension> D,
+                                    const std::function<
+																						const FieldMatrix<Precision, LocalView::Element::dimension, LocalView::Element::dimension>(
+																							const FieldVector<Precision, LocalView::Element::dimension>
+																						)
+																					> diffusion,
+																		const Precision diffusionInfinityNorm,
                                     const std::function<
 																						FieldVector<Precision, LocalView::Element::dimension>(
 																							FieldVector<Precision, LocalView::Element::dimension>
@@ -1333,9 +1350,10 @@ void assembleElementStiffnessMatrix(const LocalView& localView,
     // Dgradients: multiply the gradient w/ matrix D
     std::vector<FieldVector<Precision,dim> > gradients(referenceGradients.size());
     std::vector<FieldVector<Precision,dim> > Dgradients(referenceGradients.size());
+    const FieldMatrix<Precision,dim,dim> localD = diffusion(element.geometry().global(quadPos));
     for (size_t i=0; i<gradients.size(); i++) {
       jacobian.mv(referenceGradients[i][0], gradients[i]);
-      D.mv(gradients[i], Dgradients[i]);
+      localD.mv(gradients[i], Dgradients[i]);
 		}
     
     //shape function values for the derivative-free term
@@ -1466,7 +1484,12 @@ void processElement(const Basis& basis,
                                 typename Basis::GridView::ctype(FieldVector<typename Basis::GridView::ctype,
                                                    Basis::GridView::dimension>)
                                                > volumeTerm, 
-                            const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension> D,
+                            const std::function<
+																		const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension>(
+																			const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
+																		)
+																	> diffusion,
+														const typename Basis::GridView::ctype diffusionInfinityNorm,
                             const std::function<
 																		FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>(
 																			FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
@@ -1479,7 +1502,7 @@ void processElement(const Basis& basis,
 	localView.bind(element);
 
 	Matrix<typename Basis::GridView::ctype> elementMatrix;
-	assembleElementStiffnessMatrix(localView, elementMatrix, D, beta, betaInfinityNorm, mu);
+	assembleElementStiffnessMatrix(localView, elementMatrix, diffusion, diffusionInfinityNorm, beta, betaInfinityNorm, mu);
 
 	for(size_t p=0; p<elementMatrix.N(); p++)
 	{
@@ -1516,7 +1539,12 @@ void assembleProblem(const Basis& basis,
                                 const typename Basis::GridView::ctype(const FieldVector<typename Basis::GridView::ctype,
                                                    Basis::GridView::dimension>)
                                                > volumeTerm, 
-                            const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension> D,
+                            const std::function<
+																		const FieldMatrix<typename Basis::GridView::ctype, Basis::GridView::dimension, Basis::GridView::dimension>(
+																			const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
+																		)
+																	> diffusion,
+														const typename Basis::GridView::ctype diffusionInfinityNorm,
                             const std::function<
 																		const FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>(
 																			const FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>
@@ -1567,42 +1595,10 @@ void assembleProblem(const Basis& basis,
 	#pragma omp single
 	{
 		for(auto element = gridView.template begin<0>(); element != LastElement; element++)
-		//~ {
-			#pragma omp task default(none) firstprivate(element) shared(D,betaInfinityNorm,mu,matrix,b,basis,beta,volumeTerm)
-				processElement( basis, *element,matrix,b,volumeTerm,D,beta, betaInfinityNorm,mu );
-			// Now let's get the element stiffness matrix
-			// A dense matrix is used for the element stiffness matrix
-			//~ localView.bind(element);
+		
+			#pragma omp task default(none) firstprivate(element) shared(diffusion,diffusionInfinityNorm,betaInfinityNorm,mu,matrix,b,basis,beta,volumeTerm)
+				processElement( basis, *element,matrix,b,volumeTerm,diffusion,diffusionInfinityNorm,beta, betaInfinityNorm,mu );
 
-			//~ Matrix<double> elementMatrix;
-			//~ assembleElementStiffnessMatrix(localView, elementMatrix, D, mu);
-
-			//~ for(size_t p=0; p<elementMatrix.N(); p++)
-			//~ {
-				//~ // The global index of the p-th degree of freedom of the element
-				//~ auto row = localView.index(p);
-
-				//~ for (size_t q=0; q<elementMatrix.M(); q++ )
-				//~ {
-					//~ // The global index of the q-th degree of freedom of the element
-					//~ auto col = localView.index(q);
-					//~ #pragma omp atomic
-					//~ matrix[row][col] += elementMatrix[p][q];
-				//~ }
-			//~ }
-
-			//~ // Now get the local contribution to the right-hand side vector
-			//~ BlockVector<double> localB;
-			//~ assembleElementVolumeTerm(localView, localB, volumeTerm);
-
-			//~ for (size_t p=0; p<localB.size(); p++)
-			//~ {
-				//~ // The global index of the p-th vertex of the element
-				//~ auto row = localView.index(p);
-				//~ #pragma omp atomic
-				//~ b[row] += localB[p];
-			//~ }
-		//~ }
 		#pragma omp taskwait
 	}
 }
@@ -1781,14 +1777,17 @@ int main(int argc, char *argv[])
   const double eps = 1e-5;
   //~ const double eps = std::atof(argv[5]);
   //~ const double eps = 0.6;
-  const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
+  const double diffusionInfinityNorm = eps;
+  const auto diffusion = [eps](const FieldVector<double,Dim>& x) -> const FieldMatrix<double,Dim,Dim> { FieldMatrix<double,Dim,Dim> tmp = {{100,std::cos(x[0])},{std::cos(x[0]),1}}; tmp *= eps; return tmp; };
+  //~ const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
   //~ const FieldMatrix<double, Dim, Dim> D = {{0,0},{0,0}};
   //~ const FieldMatrix<double, 2, 2> D = {{eps*2,eps*1},{eps*1,eps*3}};
   const double betaInfinityNorm = 1;
   //ex. 5.2 (opaper_followup)
   //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {-x[1],x[0]}; };
   //ex. 5.3 (opaper_followup)
-  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
+  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
+  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {2,1}; };
   //~ const FieldVector<double,Dim> beta = {2,1};
   //~ const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
   //~ const FieldVector<double,Dim> beta = {0,0};
@@ -1801,20 +1800,23 @@ int main(int argc, char *argv[])
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (5.0*PI*PI*eps + mu) * sin(2*PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return eps*5*PI*PI*sin(PI*x[0])*sin(PI*x[1])-eps*2*PI*PI*cos(PI*x[0])*cos(PI*x[1])+mu*sin(PI*x[0])*sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 2*PI*cos(PI*x[0])*sin(PI*x[1])+PI*sin(PI*x[0])*cos(PI*x[1]);};
-  //~ #warning "Usage of beta in the sourceTerm only works for constant convection!"
+  #warning "Usage of beta in the sourceTerm only works for constant convection!"
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
-  auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
+  auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return 100*(2*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 100*beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+100*beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
+  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
   
 	//~ auto const f = [=] (const auto& coords) { return exp(-std::pow(coords[0]-0.5,2)/0.2-3*std::pow(coords[1]-0.5,2)/0.2); };
-	auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
+	//~ auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
 	//~ auto const f = [=] (const auto& coords) { return std::sin(2*PI*coords[0])*std::sin(PI*coords[1]); };
+	auto const f = [=] (const auto& coords) { return 100*sin(PI*coords[0])*sin(PI*coords[1]); };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return f(coords) * FieldVector<double,Dim>{-2*(coords[0]-0.5)/0.2,-6*(coords[1]-0.5)/0.2 }; };
-	auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
+	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { 2*PI*std::cos(2*PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(2*PI*coords[0])*std::cos(PI*coords[1]) }; };
+	auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 100*PI*std::cos(PI*x[0])*std::sin(PI*x[1]), 100*PI*std::sin(PI*x[0])*std::cos(PI*x[1]) }; };
   
   //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
   //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
-  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 1; };
+  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 100; };
   const auto kappaL = [=] (const FieldVector<double,2>& coords) { return 0; };
   
   if( argc < 4 ) {
@@ -1881,16 +1883,16 @@ int main(int argc, char *argv[])
   
   std::cout << "Testing getSVector:" << std::endl;
   const auto sVectorStart = std::chrono::high_resolution_clock::now();
-  const auto sVector = getSVector( basis, D, betaInfinityNorm, mu );
+  const auto sVector = getSVector( basis, diffusionInfinityNorm, betaInfinityNorm, mu );
   const auto sVectorEnd = std::chrono::high_resolution_clock::now();
   const auto uniformityCheck = [](const BlockVector<double>& vec) { bool result=true; for(int i=1;i<vec.size();i++) { if(std::abs(vec[i]-vec[i-1])>=1e-5) { result=false;break;}} return result;};
-  std::cout << "\tTest 1: max element vs. Diameter: " << *std::max_element(sVector.begin(),sVector.end()) << " vs. " << (Diameter*Diameter*mu+Diameter*betaInfinityNorm+D.infinity_norm()) << std::endl;
+  std::cout << "\tTest 1: max element vs. Diameter: " << *std::max_element(sVector.begin(),sVector.end()) << " vs. " << (Diameter*Diameter*mu+Diameter*betaInfinityNorm+diffusionInfinityNorm) << std::endl;
   std::cout << "\tTest 2: min element: " << *std::min_element(sVector.begin(),sVector.end()) << std::endl;
   std::cout << "\tTest 3: uniformity: " << (uniformityCheck(sVector) ? "yes" : "no" ) << std::endl;
   std::cout << "Time for generation: " << std::chrono::duration<float,std::milli>(sVectorEnd-sVectorStart).count() << " ms." << std::endl;
 
   std::cerr << "Assemble Problem" << std::endl;
-  assembleProblem(basis, stiffnessMatrix, b, sourceTerm, D, beta, betaInfinityNorm, mu);
+  assembleProblem(basis, stiffnessMatrix, b, sourceTerm, diffusion, diffusionInfinityNorm, beta, betaInfinityNorm, mu);
   std::cerr << "Assemble Problem End" << std::endl;
   
   const auto stiffnessMatrixBeforeCIP = std::get<0>(transcribeDuneToEigen( stiffnessMatrix, b, 85 ));
@@ -1931,7 +1933,7 @@ int main(int argc, char *argv[])
   // Set Dirichlet values
   auto dirichletValues = [](const auto x) -> const double
   {
-    //~ return 0;
+    return 0;
     //ex. 5.2 (opaper_followup)
     //~ if( x[0] < 0.333333 and x[1] < 1e-5) {
 			//~ return 0;
@@ -1943,12 +1945,12 @@ int main(int argc, char *argv[])
 			//~ return 1;
 		//~ }
 		//ex. 5.3 (opaper_followup)
-		if( x[0] < 1e-5 or x[1] > 0.9999) {
-			return 1;
-		}
-		else {
-			return 0;
-		}
+		//~ if( x[0] < 1e-5 or x[1] > 0.9999) {
+			//~ return 1;
+		//~ }
+		//~ else {
+			//~ return 0;
+		//~ }
   };
   Functions::interpolate(basis,b,dirichletValues, dirichletNodes);
     
@@ -2012,15 +2014,13 @@ int main(int argc, char *argv[])
 	//-----------------------------------------------
 	//Eigen-Version of solving	
 	
-	//~ using FLTPrec = mpf_class;
 	std::cerr << "Transcribe to Eigen" << std::endl;
-	auto [stiffnessEigen, RhsEigen] = transcribeDuneToEigen( stiffnessMatrix, Rhs, 85 ); //25 for occupation should be enough for all grids and lagrange elements up to 2
+	auto [stiffnessEigen, RhsEigen] = transcribeDuneToEigen( stiffnessMatrix, Rhs, 85 ); //85 for occupation should be enough for all grids and lagrange elements up to 3
 	//~ Eigen::saveMarket(stiffnessEigen, "stiffness.mtx");
 	std::cerr << "Transcribe to Eigen End" << std::endl;
 	
 	const Eigen::Vector<double,Eigen::Dynamic> u0 = transcribeDuneToEigen(x);
 	const Eigen::Vector<double,Eigen::Dynamic> eigenSVector = transcribeDuneToEigen(sVector);
-	
 	
 	//~ Eigen::ConjugateGradient<Eigen::SparseMatrix<double>,Eigen::Lower|Eigen::Upper> solver;
 	//~ Eigen::BiCGSTAB<Eigen::SparseMatrix<double,Eigen::RowMajor> > solver;
@@ -2066,9 +2066,9 @@ int main(int argc, char *argv[])
 	std::cerr << "\tTook " << std::chrono::duration<float,std::milli>(newtonEnd-newtonStart).count() << " ms." << std::endl;
 	std::cerr << "H = " << H << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), D,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//~ //for newton-only testing
 	//~ return 0;
@@ -2078,9 +2078,9 @@ int main(int argc, char *argv[])
 	
 	std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
 	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), D, mu, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), D,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
 	
@@ -2107,9 +2107,9 @@ int main(int argc, char *argv[])
 	tmp -= uplus;
 	
 	std::cerr << "(Richard|Dune) ||u^+-u_0||_A = " << ANormMaybeWorking( stiffnessMatrix, tmp) << std::endl;
-	std::cerr << "(Richard|Dune) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), uplus, D, mu, f, Df ) << std::endl;
-	std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, D, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, D,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), uplus, diffusion,diffusionInfinityNorm, mu, f, Df ) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	BlockVector<double> tmp2(Rhs), tmp3(Rhs.size());
 	stiffnessMatrix.mv(uplus, tmp3);
