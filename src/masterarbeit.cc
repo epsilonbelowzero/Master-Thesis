@@ -84,6 +84,7 @@ auto inftyNorm( const VectorImpl& x ) {
 	return std::make_pair( max, maxIdx );
 }
 
+//counts number of non-zero elements of a vector
 template < typename VectorImpl > requires IsEnumeratable<VectorImpl>
 int noNnzElements( const VectorImpl& x ) {
 	int n = 0;
@@ -97,6 +98,7 @@ int noNnzElements( const VectorImpl& x ) {
 	return x.size() - n;
 }
 
+//calculates the diamter of a simplex
 template <class Geometry>
 typename Geometry::ctype diameter(const Geometry& geom) {
 	typename Geometry::ctype result = (geom.corner(0) - geom.corner(1)).two_norm();
@@ -112,6 +114,7 @@ template < typename FltPrec >
 bool localOmegaAdaption( FltPrec& localOmega, const FltPrec errOld, const FltPrec errNew ) {
 	bool ret = false;
 	
+	//disable adaption
 	//~ return false;
 	
 	constexpr char escape = 27;
@@ -317,15 +320,15 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	//		 (i.e. contributions of \mathcal D, \beta, \mu and \mathfrak h)
 	//	3) linear interpolate the values of each mesh grid (=corner of an
 	//		 element) for the remaining lagrange node
-	//current implementation assumes that \mathcal D, \beta are constant functions
+	//@TODO current implementation assumes that \mathcal D, \beta have constant infinity norm
 	
 	using FltPrec = typename Basis::GridView::ctype;
-	Dune::BlockVector<FltPrec> xVals, yVals;
+	Dune::BlockVector<FltPrec> xVals, yVals; //save x/y coordinate for lagrange node i
 	Dune::Functions::interpolate(basis,xVals,[](auto x) { return x[0]; });
 	Dune::Functions::interpolate(basis,yVals,[](auto x) { return x[1]; });
 	
 	Dune::BlockVector<FltPrec> result(basis.dimension());
-	std::vector<int> noParticipatingElems(basis.dimension());//no=Number
+	std::vector<int> noParticipatingElems(basis.dimension());//no=Number; needed for average calculation
 	auto localView = basis.localView();
 	
 	//detect a mesh node (=corner of an element) by comparing local coordinates
@@ -358,7 +361,7 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	
 	//step 2
 	for( int i=0;i<result.size(); i++) {
-		if(noParticipatingElems[i] == 0) continue;
+		if(noParticipatingElems[i] == 0) continue; //skip Lagrange nodes that are no mesh nodes
 		
 		const FltPrec h_i = result[i] / noParticipatingElems[i];
 		result[i] = diffusionInfinityNorm + h_i * betaInfinityNorm + h_i * h_i * mu;
@@ -434,8 +437,6 @@ Eigen::Vector< FltPrec, Eigen::Dynamic > fixedpointMethod(
 	solver.factorize(A);
 	FltPrec l2errOld = std::numeric_limits<FltPrec>::infinity();
 	do {
-		//~ const FltPrec sFactor = eps + beta.infinity_norm() * H + 1.0 * std::pow(H, 2.0);
-		
 		const auto updateUplusStart = std::chrono::high_resolution_clock::now();
 		const Eigen::Vector<FltPrec,Eigen::Dynamic> uplus = u.array().min(uKappaU).max(uKappaL).matrix();
 		const auto updateRhsStart = std::chrono::high_resolution_clock::now();
@@ -513,7 +514,6 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 	Vector 	x(u0.size()),
 					uplus(u0.size()),
 					uminus(u0),
-					//~ sVector(u0.size()),
 					newB(u0.size()),
 					y(u0.size());
 	x = u0;
@@ -543,12 +543,10 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 		const auto auplusEnd = std::chrono::high_resolution_clock::now();
 		std::cout << "\told rhs: " << std::chrono::duration<float,std::milli>(auplusStart-oldRhsStart).count() << " ms." << std::endl;
 		std::cout << "\tAu+: " << std::chrono::duration<float,std::milli>(auplusEnd-auplusStart).count() << " ms." << std::endl;
-		//~ const FltPrec sFactor = eps + beta.infinity_norm() * H + 1.0 * std::pow(H, 2.0);
 		
 		const auto newRhsStart = std::chrono::high_resolution_clock::now();
 		for( int i = 0; i < x.size(); i++ ) {
 			uminus[i] = x[i] - uplus[i];
-			//~ sVector[i] = sFactor * uminus[i];
 			newB[i] = Au[i] + localOmega * (Rhs[i] - aUplus[i] - sVector[i]*uminus[i]);
 		}
 		const auto newRhsEnd = std::chrono::high_resolution_clock::now();
@@ -630,7 +628,6 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	constexpr bool doDurations = false;
 	
 	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
-	//~ const auto Identity = Eigen::Matrix<FltPrec,Eigen::Dynamic,Eigen::Dynamic>::Identity(b.size(),b.size());
 	auto bouligand = Eigen::DiagonalMatrix<FltPrec,Eigen::Dynamic>(b.size());
 	//~ Eigen::BiCGSTAB<Eigen::SparseMatrix<FltPrec,Eigen::RowMajor> > solver;
 	//~ solver.setTolerance(1e-9);
@@ -640,7 +637,6 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	
 	const auto F = [&b,&A,&sVector,Diameter,&uKappaU,&uKappaL](const Eigen::Matrix<FltPrec,Eigen::Dynamic,1>& u) {
 		const auto uplus = u.array().min(uKappaU).max(uKappaL).matrix();
-		//~ return b - A*uplus - (D+beta*Diameter+mu*Diameter*Diameter)*(u - uplus);
 		return b - A*uplus - (sVector.array()*(u - uplus).array()).matrix();
 	};
 	
@@ -686,7 +682,6 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 		nanCheck and std::cerr << "\t\tNaN Check 1.25: " << Eigen::MatrixXd(A).hasNaN() << std::endl;
 		nanCheck and std::cerr << "\t\tNaN Check 1.5: " << Eigen::MatrixXd(bouligand).hasNaN() << std::endl;
 		nanCheck and std::cerr << "\t\tNaN Check 2: " << Eigen::MatrixXd(tmp).hasNaN() << std::endl;
-		//~ tmp.diagonal() += ((D+beta*Diameter+mu*Diameter*Diameter)*(bouligand.diagonal().array() - 1)).matrix();
 		tmp.diagonal() += (sVector.array()*(bouligand.diagonal().array() - 1)).matrix();
 		nanCheck and std::cerr << "\t\tNaN Check 3: " << Eigen::MatrixXd(tmp).hasNaN() << std::endl;
 		if constexpr(solveableCheck) {
@@ -853,58 +848,6 @@ double zeroFunction(Dune::FieldVector<double,2>) {
 	return 0;
 }
 
-//setting h=0 is a wrong value, but allows to omit the additional parameter,
-//and is only neccessary for validating the general version
-//~ template < typename FltPrec, typename VectorImpl, typename LocalView, typename GridView > requires IsEnumeratable<VectorImpl>
-//~ FltPrec L2Norm( GridView gridView, LocalView localView, VectorImpl u, const FltPrec h = 0) {
-	//~ constexpr int dim = LocalView::Element::dimension;
-	
-	//~ FltPrec l2err = 0;
-	//~ FltPrec l2err2 = 0;
-	
-	//~ for( const auto& elem : elements(gridView) ) {
-		//~ localView.bind(elem);
-		
-		//~ const auto& localFiniteElement = localView.tree().finiteElement();
-		//~ const int order = 4*localFiniteElement.localBasis().order();
-		//~ const auto& quadRule = Dune::QuadratureRules<FltPrec, dim>::rule(elem.type(), order);
-		
-		//~ for( const auto& quadPoint : quadRule ) {
-			//~ const Dune::FieldVector<FltPrec,dim>& quadPos = quadPoint.position();
-			
-			//~ const double integrationElement = elem.geometry().integrationElement(quadPos);
-			//~ std::vector<Dune::FieldVector<FltPrec,1> > shapeFunctionValues;
-			//~ localFiniteElement.localBasis().evaluateFunction(quadPos, shapeFunctionValues );
-
-			//~ double localU = 0;
-			//~ for( size_t p = 0; p < localFiniteElement.size(); p++ ) {
-				//~ const int globalIndex = localView.index(p);
-				//~ localU += shapeFunctionValues[p] * u[globalIndex];
-			//~ }
-			//~ l2err += std::pow(localU, 2) * quadPoint.weight() * integrationElement;
-		//~ }
-		//~ localView.unbind();
-	//~ }
-	//only works for linear quadratic elements, usefull for comparison
-	//~ for( const auto& elem : elements(gridView) ) {
-		//~ localView.bind(elem);
-		
-		//~ const int noCorners = elem.geometry().corners();
-		//~ for( int i = 0; i < noCorners; i++ ) {
-			//~ const int localIndex = localView.tree().localIndex(i);
-			//~ const int globalIndex = localView.index(i);
-			//~ const auto coordinate = elem.geometry().corner(i);
-			
-			//~ l2err2 += std::pow(u[globalIndex], 2) * 0.25 * std::pow(h, 2);
-		//~ }
-		
-		//~ localView.unbind();
-	//~ }
-	//~ std::cout << "||u||: l2err = " << std::setw(15) << l2err << ", l2err2 = " << std::setw(15) << l2err2 << std::endl;
-	
-	//~ return std::sqrt(l2err);
-//~ }
-
 template < typename FltPrec, typename VectorImpl, typename LocalView, typename GridView > requires IsEnumeratable<VectorImpl>
 FltPrec L2Norm( GridView gridView, LocalView localView, const VectorImpl u,
 								const std::function<double(Dune::FieldVector<double,LocalView::Element::dimension>)> f = zeroFunction
@@ -939,21 +882,6 @@ FltPrec L2Norm( GridView gridView, LocalView localView, const VectorImpl u,
 		}
 		localView.unbind();
 	}
-	//~ for( const auto& elem : elements(gridView) ) {
-		//~ localView.bind(elem);
-		
-		//~ const int noCorners = elem.geometry().corners();
-		//~ for( int i = 0; i < noCorners; i++ ) {
-			//~ const int localIndex = localView.tree().localIndex(i);
-			//~ const int globalIndex = localView.index(i);
-			//~ const auto coordinate = elem.geometry().corner(i);
-			
-			//~ l2err2 += std::pow(u[globalIndex] - f(coordinate), 2) * 0.25 * std::pow(h, 2);
-		//~ }
-		
-		//~ localView.unbind();
-	//~ }
-	//~ std::cout << "||u-f||: l2err = " << std::setw(15) << l2err << ", l2err2 = " << std::setw(15) << l2err2 << std::endl;
 	
 	return std::sqrt(l2err);
 }
@@ -1071,43 +999,22 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 	//i.e. [\grad u] = 0
 	using FltPrec = typename Basis::GridView::ctype;
 	
-	//~ std::cout << "CIP-Norm" << std::endl;
 	FltPrec result = std::pow(ANorm(basis.gridView(),basis.localView(),u,diffusion,diffusionInfinityNorm,mu,f,Df),2);
-	//~ std::cout << "\t" << "A-Norm:" << std::endl
-						//~ << "\t" << "\t" << "NaN-Check = " << std::isnan(result) << std::endl
-						//~ << "\t" << "\t" << "infinity check = " << std::isinf(result) << std::endl
-						//~ << "\t" << "\t" << "sign check = " << (result < 0 ? "negative" : "positive") << std::endl;
 	
 	const auto action = [&u,&result](const int globalI,const int globalJ, const FltPrec contrib) {
 		result += u[globalI] * u[globalJ] * contrib;
 	};
 	addCIPImpl(basis,action,betaInfinityNorm,gamma);
-	//~ std::cout << "\t" << "CIP-Addition:" << std::endl
-						//~ << "\t" << "\t" << "NaN-Check = " << std::isnan(result) << std::endl
-						//~ << "\t" << "\t" << "infinity check = " << std::isinf(result) << std::endl
-						//~ << "\t" << "\t" << "sign check = " << (result < 0 ? "negative" : "positive") << std::endl
-						//~ << "\t" << "\t" << "value < eps = " << (std::abs(result) < std::numeric_limits<FltPrec>::epsilon() ? "yes" : "no") << std::endl
-						//~ << "\t" << "\t" << "value = " << result << std::endl
-						//~ << "\t" << "\t" << "value0 = " << resultt[0] << ", " << resultt[resultt.size()-1] << std::endl;
-	
-	//~ std::cout << "\t" << "\t" << "Sign correction = ";
+
 	if( result < 0 and std::abs(result) < std::numeric_limits<float>::epsilon() ) {
 		result = std::abs(result);
-		//~ std::cout << "yes" << std::endl;
-	//~ } else {
-		//~ std::cout << "no" << std::endl;
 	}
-	//~ std::cout << "\t" << "sqrt:" << std::endl
-						//~ << "\t" << "\t" << "NaN-Check = " << std::isnan(std::sqrt(result)) << std::endl
-						//~ << "\t" << "\t" << "infinity check = " << std::isinf(std::sqrt(result)) << std::endl
-						//~ << "\t" << "\t" << "sign check = " << (std::sqrt(result) < 0 ? "negative" : "positive") << std::endl;
 	
 	return std::sqrt(result);
 }
 
 template < class Basis >
 void addCIPImpl(const Basis& basis,
-						//~ BCRSMatrix<typename Basis::GridView::ctype>& stiffnessMatrix,
 						const std::function<void(const int,const int,const typename Basis::GridView::ctype)> action,
 						const typename Basis::GridView::ctype betaInfinityNorm,
 						const typename Basis::GridView::ctype gamma)
@@ -1120,28 +1027,20 @@ void addCIPImpl(const Basis& basis,
 	};
 	
 	const auto gridView = basis.gridView();
-	//~ std::cout << "||beta||_L^infty = " << beta.infinity_norm() << std::endl;
 	auto localView = basis.localView();
 	auto localViewOut = basis.localView();
 	for( const auto& element : elements(gridView) ) {
 		localView.bind(element);
 		for( const auto& intersection : intersections(gridView, element) ) {
-			//~ std::cout << "\tIntersection (" << intersection.geometry().corners() << " corners; ";
-				//~ for( int i=0; i < intersection.geometry().corners(); i++ ) std::cout << intersection.geometry().corner(i) << ((i<intersection.geometry().corners()-1) ? " -- " : "");
-				//~ std::cout << " )" << std::endl;
 			if( intersection.boundary() ) {
-				//~ std::cout << "\t\tBoundary -- skipping" << std::endl;
 				continue;
 			}
 			
 			localViewOut.bind(intersection.outside());
 			
 			const FltPrec h_F = diameter(intersection.geometry());
-			//~ std::cout << "\t\th_F = " << h_F << std::endl;
 			
 			constexpr int intersectionDim = DomainDim - 1;
-			//~ std::cout << "\t\tIntersectionDim = " << intersection.geometry().mydimension << std::endl;;
-			//~ std::cout << "\t\tLocal Order = " << localView.tree().finiteElement().localBasis().order() << std::endl;
 			
 			//Q_i results in i, but highest order is 2i, reducted by 1 (gradients), doubled (product of two such functions)
 			const int quadOrder = 2*(2*localView.tree().finiteElement().localBasis().order()-1);
@@ -1152,13 +1051,9 @@ void addCIPImpl(const Basis& basis,
 			auto const geometryIntersection = intersection.geometry();
 			auto const geometryOut = intersection.outside().geometry();
 			
-			//~ auto const stiffnessMatrixTmp = std::get<0>(transcribeDuneToEigen(stiffnessMatrix, b, 85));
-			
 			for( const auto& quadPoint : quadRule ) {
 				const auto quadPos = quadPoint.position();
-				//~ std::cout << "\t\t\tQuadPoint = " << quadPos << std::endl;
 				const auto quadPosGlobal = geometryIntersection.global(quadPos);
-				//~ std::cout << "\t\t\tQuadPosGlobal = " << quadPosGlobal << std::endl;
 				//switch to geometryIn(In|Out)side?
 				//~ std::cout << "\t\t\t\tTest: " << intersection.geometryInInside().global(quadPos) << " vs. " << geometryIn.local(quadPosGlobal) << std::endl;
 				//~ std::cout << "\t\t\t\tTest: " << intersection.geometryInOutside().global(quadPos) << " vs. " << geometryOut.local(quadPosGlobal) << std::endl;
@@ -1171,14 +1066,11 @@ void addCIPImpl(const Basis& basis,
 
 				// The determinant term in the integral transformation formula
 				const auto integrationElement = geometryIntersection.integrationElement(quadPos);
-				//~ std::cout << "\t\t\t" << "IntegrationElement = " << integrationElement << std::endl;
 
 				//get local gradients
 				std::vector<FieldMatrix<FltPrec,1,DomainDim>> referenceGradientsIn,referenceGradientsOut;
 				localView.tree().finiteElement().localBasis().evaluateJacobian(geometryIn.local(quadPosGlobal), referenceGradientsIn);
 				localViewOut.tree().finiteElement().localBasis().evaluateJacobian(geometryOut.local(quadPosGlobal), referenceGradientsOut);
-				//~ std::cout << "\t\t\t" << "ReferenceGradientsIn = " << referenceGradientsIn[0] << ' ' << referenceGradientsIn[1] << ' ' << referenceGradientsIn[2] << ' ' << referenceGradientsIn[3];
-				//~ std::cout << "\t\t\t" << "ReferenceGradientsOut = " << referenceGradientsOut[0] << ' ' << referenceGradientsOut[1] << ' ' << referenceGradientsOut[2] << ' ' << referenceGradientsOut[3];
 
 				//get global gradients
 				std::vector<FieldVector<FltPrec,DomainDim> > 	gradientsIn(referenceGradientsIn.size()), gradientsOut(referenceGradientsIn.size());
@@ -1186,8 +1078,6 @@ void addCIPImpl(const Basis& basis,
 					jacobianIn.mv(referenceGradientsIn[i][0], gradientsIn[i]);
 					jacobianOut.mv(referenceGradientsOut[i][0], gradientsOut[i]);
 				}
-				//~ std::cout << "\t\t\t" << "gradientsIn = " << gradientsIn[0] << ' ' << gradientsIn[1] << ' ' << gradientsIn[2] << ' ' << gradientsIn[3] << std::endl;
-				//~ std::cout << "\t\t\t" << "gradientsOut = " << gradientsOut[0] << ' ' << gradientsOut[1] << ' ' << gradientsOut[2] << ' ' << gradientsOut[3] << std::endl;
 				
 				//save indices of global basis functions of both elements (i=intersection.inside() == localView, j = intersection.outside() = localViewOut) to
 				//check later in the loop over each elements' dofs, whether the support is only in one element or both
@@ -1220,8 +1110,7 @@ void addCIPImpl(const Basis& basis,
 					else {						
 						//extra case 1
 						//note: when intersection.inside() & intersection.outside() are inverted, for the 2nd element the
-						//dofs w/ support in only the outside() element are computed
-						//~ std::cout << "\t\t\t\tExtra contribution (I): " << globalI << std::endl;
+						//dofs w/ support just in the outside() element are computed
 						extraContribution.push_back(i);
 					}
 					
@@ -1233,7 +1122,6 @@ void addCIPImpl(const Basis& basis,
 						if( tmp != globalIIndices.end() ) {
 							 localIIndexOfJ = std::distance(globalIIndices.begin(), tmp);
 						}
-						//~ std::cout << "\t\t\t\tFound basis element: localI / localJ / globalI / globalJ / localJIndexOfI / localIIndexOfJ: " << i << '\t' << j << '\t' << globalI << '\t' << globalJ << '\t' << localJIndexOfI << '\t' << localIIndexOfJ << std::endl;
 						
 						//compute the gradient jumps
 						FieldVector<FltPrec,DomainDim> diffIn, diffOut;
@@ -1245,28 +1133,23 @@ void addCIPImpl(const Basis& basis,
 						if(localIIndexOfJ != -1) {
 							diffOut += gradientsIn[localIIndexOfJ];
 						}
-						//~ std::cout << "\t\t\t\t\t" << "diffIn = " << diffIn << std::endl;
-						//~ std::cout << "\t\t\t\t\t" << "diffOut = " << diffOut << std::endl;
 						
 						auto contribution = evaluateIntegrand(h_F,diffIn,diffOut) * integrationElement * quadPoint.weight();
-						//~ std::cout << "\t\t\t\t\tContribution";
 						if( localIIndexOfJ != -1 && localJIndexOfI != -1 ) {
 							//extra case 2
 							//symmetry: if global basis functions are on the intersection, the contribution would be doubled when the inverse case is considered
 							//(same intersection, inside & outside the other way around)
 							contribution /= 2;
-							//~ std::cout << " (halfed!)";
 						}
-						//~ std::cout << " = " << contribution << std::endl;
-						//~ stiffnessMatrix[globalI][globalJ] += contribution;
+						//use opaque action function to be able to use the same function for both
+						//norm calculation and stiffness matrix creation
 						action(globalI,globalJ,contribution);
 					}
 				}
-				//~ std::cout << "\t\t\t\tNo. Extra contribution I: " << extraContribution.size() << " (";
-				//~ for( int i=0; i < extraContribution.size()-1; i++) std::cout << extraContribution[i] << ", ";
-				//~ std::cout << extraContribution.back() << ")" << std::endl;
 				
 				//contributions for dofs not on the intersection within intersection.inside()
+				//when inside and outside are interchanged, the corresponding contributions
+				//are calculated, therefore those terms are missing
 				for( int i=0; i<extraContribution.size(); i++ ) {
 					for( int j=0; j<extraContribution.size(); j++ ) {
 						const auto localI1 = extraContribution[i];
@@ -1274,17 +1157,13 @@ void addCIPImpl(const Basis& basis,
 						const auto globalI1 = localView.index(localI1);
 						const auto globalI2 = localView.index(localI2);
 						
-						//~ std::cout << "\t\t\t\t\tExtra contribution: " << globalI1 << ", " << globalI2 << std::endl;
-						
 						const auto diffIn = gradientsIn[localI1];
 						const auto diffOut = gradientsIn[localI2];
-						//~ std::cout << "\t\t\t\t\t\tGradients: " << diffInI << '\t' << diffOutI << std::endl;
-						//~ stiffnessMatrix[globalI1][globalI2] += evaluateIntegrand(h_F,diffIn,diffOut) * integrationElement * quadPoint.weight();
+						
 						action(globalI1,globalI2, evaluateIntegrand(h_F,diffIn,diffOut) * integrationElement * quadPoint.weight() );
 					}
 				}
 			}
-			//~ std::cout << "\t\t\tDelta stiffnessMatrix:" << std::endl << std::get<0>(transcribeDuneToEigen(stiffnessMatrix, b, 85)) - stiffnessMatrixTmp;
 		}
 	}
 }
@@ -1321,8 +1200,6 @@ void assembleElementStiffnessMatrix(const LocalView& localView,
 
   // Get a quadrature rule
   int order = 4 * (localFiniteElement.localBasis().order());
-  //@Debug
-  //~ std::cout << "Order = " << order << std::endl;
   
   const auto& quadRule = QuadratureRules<Precision, dim>::rule(element.type(),
                                                             order);
@@ -1583,7 +1460,6 @@ void assembleProblem(const Basis& basis,
 
 	const auto LastElement = gridView.template end<0>();
 	
-  //~ for (const auto& element : elements(gridView))
   //OpenMP requires random access iterators for a parallel for loop,
   //which cannot be provided by dune. therefore use a master-slave
   //approach: the master thread generates a task for each partition
@@ -1794,7 +1670,7 @@ int main(int argc, char *argv[])
   //~ const FieldVector<double,Dim> beta = {1,0};
   
   constexpr int LagrangeOrder = 1;
-  using GridMethod = Triangle::Standard;
+  using GridMethod = Square::Standard;
   
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (5.0*PI*PI*eps + mu) * sin(2*PI*x[0]) * sin(PI*x[1]);};
@@ -2083,8 +1959,7 @@ int main(int argc, char *argv[])
 	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
-	
-	//~ std::cerr << "||normalsolution-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), normalSolution, f ) << std::endl;
+	const auto normalsolution(x);
 	
 	x = fixedpointMethod( x, stiffnessMatrix, Rhs, omega, sVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
 	Vector uplus(x.size()), uminus(x.size());
@@ -2096,7 +1971,7 @@ int main(int argc, char *argv[])
 	
 	//--------------
 	//some norms
-	std::cerr << "||u_0-f||_2: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), x, f) << std::endl;
+	std::cerr << "||u_0-f||_2: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), normalsolution, f) << std::endl;
 
 	std::cerr << "||u_N-f||_2 = " << L2Norm<double>( gridView, basis.localView(), x, f) << std::endl;
 	std::cerr << "(Richard|Dune) ||u^+-f||_L2 = " << L2Norm<double>( gridView, basis.localView(), uplus, f) << std::endl;
@@ -2115,12 +1990,12 @@ int main(int argc, char *argv[])
 	stiffnessMatrix.mv(uplus, tmp3);
 	tmp2 -= tmp3;
 	for( int i = 0; i < tmp2.size(); i++ ) {
-		tmp2[i] -= (eps + + betaInfinityNorm * H + 1.0 * std::pow(Diameter, 2.0)) * uminus[i];
+		tmp2[i] -= sVector[i] * uminus[i];
 	}
 	std::cerr << "||Rhs - Auplus - s(uminus)||_\\infty = " << std::get<0>(inftyNorm(tmp2)) << std::endl;
 	
 	Eigen::Vector<double,Eigen::Dynamic> duneXtranscribed = ([](const auto& u){ Eigen::Vector<double,Eigen::Dynamic> tmp(u.size()); for( int i=0; i<u.size();i++ ) tmp[i]=u[i]; return tmp; })(x);
-	//~ std::cerr << "||u^+_eigen - u^+_dune||_L2 = " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix()-duneXtranscribed.array().min(uKappaU).max(uKappaL).matrix() ) << std::endl;
+	std::cerr << "||u^+_eigen - u^+_dune||_L2 = " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix()-duneXtranscribed.array().min(uKappaU).max(uKappaL).matrix() ) << std::endl;
 	
 	return 0;
 }
