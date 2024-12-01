@@ -122,7 +122,7 @@ bool localOmegaAdaption( FltPrec& localOmega, const FltPrec errOld, const FltPre
 	bool ret = false; //if true, the iteration is done again with the updated omega. if false, the step is accepted
 	
 	//disable adaption
-	//~ return false;
+	return false;
 	
 	constexpr char escape = 27;
 	const std::string boldOn = "[1m";
@@ -437,15 +437,17 @@ Eigen::Vector< FltPrec, Eigen::Dynamic > fixedpointMethod(
 	std::cerr << "Fixedpoint Method with Eigen Interface" << std::endl;
 	
 	constexpr bool DoOutput = false;
+	constexpr bool DoDurations = false;
 	
+	const auto fixedpointStart = std::chrono::high_resolution_clock::now();
 	Eigen::Vector<FltPrec,Eigen::Dynamic> oldB(Rhs),newB(Rhs);
 	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
 
 	//~ Eigen::ConjugateGradient<Eigen::SparseMatrix<FltPrec>,Eigen::Lower|Eigen::Upper> solver;
 	//~ solver.setTolerance(1e-9);
 	//~ solver.compute(A);
-	//~ Eigen::SparseLU<Eigen::SparseMatrix<FltPrec>,Eigen::COLAMDOrdering<int> > solver;
-	Eigen::UmfPackLU<Eigen::SparseMatrix<FltPrec> > solver;
+	Eigen::SparseLU<Eigen::SparseMatrix<FltPrec>,Eigen::COLAMDOrdering<int> > solver;
+	//~ Eigen::UmfPackLU<Eigen::SparseMatrix<FltPrec> > solver;
 	
 	if constexpr(DoOutput) Output(u0,std::ios::trunc,"output_u");
 	if constexpr(DoOutput) Output(u0,std::ios::trunc,"output_uplus");
@@ -453,33 +455,47 @@ Eigen::Vector< FltPrec, Eigen::Dynamic > fixedpointMethod(
 	const int MaxIterations = 10000;
 	int n = MaxIterations;
 	FltPrec localOmega = omega;
-	const auto fixedpointStart = std::chrono::high_resolution_clock::now();
+	
 	solver.analyzePattern(A);
 	solver.factorize(A);
 	FltPrec l2errOld = std::numeric_limits<FltPrec>::infinity();
 	do {
-		const auto updateUplusStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateUplusStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		const Eigen::Vector<FltPrec,Eigen::Dynamic> uplus = u.array().min(uKappaU).max(uKappaL).matrix();
-		const auto updateRhsStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateRhsStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		newB = A*u + localOmega*( Rhs - A*uplus - (sVector.array()*(u-uplus).array()).matrix() );
-		const auto solverStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto solverStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		const Eigen::Vector<FltPrec,Eigen::Dynamic> y = solver.solve(newB);
-		const auto solverEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tu+: " << std::chrono::duration<float,std::milli>(updateRhsStart-updateUplusStart).count() << " ms." << std::endl;
-		std::cout << "\trhs: " << std::chrono::duration<float,std::milli>(solverStart-updateRhsStart).count() << " ms." << std::endl;
-		std::cout << "\tSolver: " << std::chrono::duration<float,std::milli>(solverEnd-solverStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto solverEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tu+: " << std::chrono::duration<float,std::milli>(updateRhsStart-updateUplusStart).count() << " ms." << std::endl;
+			//~ std::cout << "\trhs: " << std::chrono::duration<float,std::milli>(solverStart-updateRhsStart).count() << " ms." << std::endl;
+			//~ std::cout << "\tSolver: " << std::chrono::duration<float,std::milli>(solverEnd-solverStart).count() << " ms." << std::endl;
+		//~ }
 		
 		//@Debug
-		const auto computeNormStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto computeNormStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		const auto l2err = L2Norm((y-u).eval());
 		if( localOmegaAdaption( localOmega, l2errOld, l2err ) ) continue;
 		l2errOld = l2err;
-		const auto computeNormEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tNorm: " << std::chrono::duration<float,std::milli>(computeNormEnd-computeNormStart).count() << " ms." << std::endl;
-		const auto updateUStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto computeNormEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tNorm: " << std::chrono::duration<float,std::milli>(computeNormEnd-computeNormStart).count() << " ms." << std::endl;
+			//~ const auto updateUStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		u = y.eval();
-		const auto updateUEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tUpdate u: " << std::chrono::duration<float,std::milli>(updateUEnd-updateUStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateUEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tUpdate u: " << std::chrono::duration<float,std::milli>(updateUEnd-updateUStart).count() << " ms." << std::endl;
+		//~ }
 		if constexpr(DoOutput) Output(u, std::ios::app | std::ios::ate, "output_u");
 		if constexpr(DoOutput) Output(uplus, std::ios::app | std::ios::ate, "output_uplus");
 		std::cout << "Break-Condition: " << l2err << std::endl;
@@ -510,6 +526,7 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 	std::cerr << "Fixedpoint Method with Dune Interface" << std::endl;
 	
 	constexpr bool DoOutput = true;
+	constexpr bool DoDurations = false;
 	
 	using Vector = Dune::BlockVector<FltPrec>;
 	using Matrix = Dune::BCRSMatrix<FltPrec>;
@@ -517,6 +534,11 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 	if constexpr (DoOutput) Output(u0,std::ios::trunc,"output_u");
 	if constexpr (DoOutput) Output(u0,std::ios::trunc,"output_uplus");
 
+	const int NnzRhs = noNnzElements(Rhs);
+	const int NoInnerNods = NnzRhs; //only works for dirichlet boundary conditions and non-zero rhs-function
+	const int NoBoundaryNodes = Rhs.size() - NnzRhs;
+
+	const auto fixedpointStart = std::chrono::high_resolution_clock::now();
 	Dune::MatrixAdapter<Matrix,Vector,Vector> linearOperator(A);
 	// Sequential incomplete LU decomposition as the preconditioner
 	//~ Dune::SeqILU<Matrix,Vector,Vector> preconditioner(A,
@@ -539,87 +561,118 @@ Dune::BlockVector< FltPrec > fixedpointMethod(
 					y(u0.size());
 	x = u0;
 	
-	const int NnzRhs = noNnzElements(Rhs);
-	const int NoInnerNods = NnzRhs; //only works for dirichlet boundary conditions and non-zero rhs-function
-	const int NoBoundaryNodes = Rhs.size() - NnzRhs;
-	
 	FltPrec l2errOld = std::numeric_limits<FltPrec>::infinity();
 	FltPrec localOmega = omega;
-	
-	const auto fixedpointStart = std::chrono::high_resolution_clock::now();
+
 	const int MaxIterations = 10000;
 	int n = MaxIterations;
 	do {
-		const auto uplusStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto uplusStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		for( int i = 0; i < x.size(); i++ ) {
 			uplus[i] = std::clamp(x[i],uKappaL[i],uKappaU[i]);
 		}
-		const auto uplusEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tu+: " << std::chrono::duration<float,std::milli>(uplusEnd-uplusStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto uplusEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tu+: " << std::chrono::duration<float,std::milli>(uplusEnd-uplusStart).count() << " ms." << std::endl;
+		//~ }
 		Vector aUplus(u0.size()), Au(u0.size());
-		const auto oldRhsStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto oldRhsStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		A.mv( x, Au );
-		const auto auplusStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto auplusStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		A.mv( uplus, aUplus );
-		const auto auplusEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\told rhs: " << std::chrono::duration<float,std::milli>(auplusStart-oldRhsStart).count() << " ms." << std::endl;
-		std::cout << "\tAu+: " << std::chrono::duration<float,std::milli>(auplusEnd-auplusStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto auplusEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\told rhs: " << std::chrono::duration<float,std::milli>(auplusStart-oldRhsStart).count() << " ms." << std::endl;
+			//~ std::cout << "\tAu+: " << std::chrono::duration<float,std::milli>(auplusEnd-auplusStart).count() << " ms." << std::endl;
+		//~ }
 		
-		const auto newRhsStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto newRhsStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		for( int i = 0; i < x.size(); i++ ) {
 			uminus[i] = x[i] - uplus[i];
 			newB[i] = Au[i] + localOmega * (Rhs[i] - aUplus[i] - sVector[i]*uminus[i]);
 		}
-		const auto newRhsEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tNew Rhs: " << std::chrono::duration<float,std::milli>(newRhsEnd-newRhsStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto newRhsEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tNew Rhs: " << std::chrono::duration<float,std::milli>(newRhsEnd-newRhsStart).count() << " ms." << std::endl;
+		//~ }
 		
 		//~ const auto [max,maxId] = inftyNorm( sVector );
 		//~ std::cerr << "max s / max b / ration: " << max << '\t' << Rhs[maxId] << '\t' << max / Rhs[maxId] << std::endl;
 		//~ const int NnzS = noNnzElements(sVector);
 		//~ std::cerr << "nnz rhs / nnz s / ratio (inner): " << NnzRhs << '\t' << NnzS << '\t' << static_cast<double>(NnzS) / (sVector.size() - NoBoundaryNodes) << std::endl;
 		
-		const auto updateInitialGuessStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateInitialGuessStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		y = x;
-		const auto updateInitialGuessEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tUpdate Initial Guess: " << std::chrono::duration<float,std::milli>(updateInitialGuessEnd-updateInitialGuessStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateInitialGuessEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tUpdate Initial Guess: " << std::chrono::duration<float,std::milli>(updateInitialGuessEnd-updateInitialGuessStart).count() << " ms." << std::endl;
+		//~ }
 
 		// Solve!
-		const auto solveStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto solveStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		solver.apply(y, newB, statistics);
-		const auto solveEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tSolve: " << std::chrono::duration<float,std::milli>(solveEnd-solveStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto solveEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tSolve: " << std::chrono::duration<float,std::milli>(solveEnd-solveStart).count() << " ms." << std::endl;
+		//~ }
 		
 		//Dune
-		const auto computeDeltaStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto computeDeltaStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		auto tmp(y);
 		tmp -= x;
-		const auto computeDeltaEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tCompute Delta: " << std::chrono::duration<float,std::milli>(computeDeltaEnd-computeDeltaStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto computeDeltaEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tCompute Delta: " << std::chrono::duration<float,std::milli>(computeDeltaEnd-computeDeltaStart).count() << " ms." << std::endl;
+		//~ }
 		
 		//@Debug
-		const auto normStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto normStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		auto l2err = L2Norm(tmp);
-		const auto normEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tCompute Norm: " << std::chrono::duration<float,std::milli>(normEnd-normStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto normEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tCompute Norm: " << std::chrono::duration<float,std::milli>(normEnd-normStart).count() << " ms." << std::endl;
+		//~ }
 		std::cout << "Break-Condition: " << l2err << std::endl;
 		
 		if( localOmegaAdaption(localOmega,l2errOld,l2err) ) continue;
 		l2errOld = l2err;
 		
 		if( std::isnan(l2err)or (--n <= 0) or l2err < 1e-8 ) break; //1e-12 if beta==0, 1e-8 otherwise
-		const auto updateXStart = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateXStart = std::chrono::high_resolution_clock::now();
+		//~ }
 		x = y;
-		const auto updateXEnd = std::chrono::high_resolution_clock::now();
-		std::cout << "\tUpdate Solution: " << std::chrono::duration<float,std::milli>(updateXEnd-updateXStart).count() << " ms." << std::endl;
+		//~ if constexpr(DoDurations) {
+			//~ const auto updateXEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\tUpdate Solution: " << std::chrono::duration<float,std::milli>(updateXEnd-updateXStart).count() << " ms." << std::endl;
+		//~ }
 		
 		if constexpr (DoOutput) Output(x, std::ios::app | std::ios::ate, "output_u");
 		if constexpr (DoOutput) {
-			Vector tmpUPlus(x.size());
-			for( int i=0; i < tmpUPlus.size(); i++ ) {
-				tmpUPlus[i] = std::clamp(y[i],uKappaL[i],uKappaU[i]);
-			}
+		Vector tmpUPlus(x.size());
+		for( int i=0; i < tmpUPlus.size(); i++ ) {
+			tmpUPlus[i] = std::clamp(y[i],uKappaL[i],uKappaU[i]);
+		}
+		if constexpr(DoOutput) {
 			Output(tmpUPlus, std::ios::app | std::ios::ate, "output_uplus");
 		}
+	}
 	}
 	while( true );
 	const auto fixedpointEnd = std::chrono::high_resolution_clock::now();
@@ -645,9 +698,12 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	constexpr bool nanCheck = false;
 	constexpr bool conditionNumberCheck = false;
 	constexpr bool solveableCheck = false;
-	constexpr bool doOutput = true;
+	constexpr bool doOutput = false;
 	constexpr bool doDurations = false;
 	
+	std::cerr << "Newton method" << std::endl;
+	
+	const auto newtonStart = std::chrono::high_resolution_clock::now();
 	Eigen::Vector<FltPrec,Eigen::Dynamic> u(u0);
 	auto bouligand = Eigen::DiagonalMatrix<FltPrec,Eigen::Dynamic>(b.size());
 	//~ Eigen::BiCGSTAB<Eigen::SparseMatrix<FltPrec,Eigen::RowMajor> > solver;
@@ -666,20 +722,24 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	//~ const int NoBoundaryNodes = b.size() - NnzRhs;
 	
 	int n = 0;
-	std::cerr << "while loop" << std::endl;
+	//~ if constexpr(doDurations) {
+		//~ std::cout << "while loop" << std::endl;
+	//~ }
 	if constexpr (doOutput) outputVector<FltPrec>( basis, u, std::ios::trunc, "newton" );
 	if constexpr (doOutput) outputVector<FltPrec>( basis, u.array().min(uKappaU).max(uKappaL).matrix(), std::ios::trunc, "newton_uplus" );
 	do {
 		n++;
 		
-		std::cerr << "\tLoop body" << std::endl;
-		const auto setIdentity = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(doDurations) {
+			//~ std::cout << "\tLoop body" << std::endl;
+			//~ const auto setIdentity = std::chrono::high_resolution_clock::now();
+		//~ }
 		bouligand.setIdentity();
-		const auto setIdentityEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tSet Identity end: " << std::chrono::duration<float,std::milli>(setIdentityEnd-setIdentity).count() << std::endl;	
-		}
-		const auto updateBouligand = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(doDurations) {
+			//~ const auto setIdentityEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tSet Identity end: " << std::chrono::duration<float,std::milli>(setIdentityEnd-setIdentity).count() << std::endl;	
+			//~ const auto updateBouligand = std::chrono::high_resolution_clock::now();
+		//~ }
 		nanCheck and std::cout << "\t\tNaN Check 1: " << u.hasNaN() << std::endl;
 		for( int i = 0; i < u.size(); i++ ) {
 			if( u[i] < uKappaL[i]-std::numeric_limits<FltPrec>::epsilon() || u[i] > uKappaU[i]+std::numeric_limits<FltPrec>::epsilon() ) {
@@ -692,11 +752,12 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 				//~ bouligand.diagonal()[i] = 0.25;
 			//~ }
 		}
-		const auto updateBouligandEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tUpdate bouligand end: " << std::chrono::duration<float,std::milli>(updateBouligandEnd-updateBouligand).count() << std::endl;
-		}
-		const auto updateTmp = std::chrono::high_resolution_clock::now();
+		
+		//~ if constexpr(doDurations) {
+			//~ const auto updateBouligandEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tUpdate bouligand end: " << std::chrono::duration<float,std::milli>(updateBouligandEnd-updateBouligand).count() << std::endl;
+			//~ const auto updateTmp = std::chrono::high_resolution_clock::now();
+		//~ }
 		
 		//way better (performance wise) implementation of (sFactor* 1 - A) * bouligand - sFactor * 1
 		Eigen::SparseMatrix<FltPrec,Eigen::RowMajor> tmp = - A * bouligand;
@@ -711,11 +772,12 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 			std::cout << "tmp: " << tmp << std::endl;
 			std::cout << "rhs: " << -F(u) << std::endl;
 		}
-		const auto updateTmpEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tUpdate tmp end: " << std::chrono::duration<float,std::milli>(updateTmpEnd - updateTmp).count() << std::endl;
-		}
-		const auto compute = std::chrono::high_resolution_clock::now();
+		
+		//~ if constexpr(doDurations) {
+			//~ const auto updateTmpEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tUpdate tmp end: " << std::chrono::duration<float,std::milli>(updateTmpEnd - updateTmp).count() << std::endl;
+			//~ const auto compute = std::chrono::high_resolution_clock::now();
+		//~ }
 		//~ solver.compute(tmp); //iterative solvers
 		solver.analyzePattern(tmp); //direct solver
 		solver.factorize(tmp);		  //direct solver
@@ -726,19 +788,21 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 			std::cout << "\t\t\t\tsmallest = " << svd.singularValues()(svd.singularValues().size()-1) << std::endl;
 			std::cout << "\t\t\t\tall = " << svd.singularValues() << std::endl;
 		}
-		const auto computeEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tCompute end: " << std::chrono::duration<float,std::milli>(computeEnd - compute).count() << std::endl;
-		}
-		const auto solve = std::chrono::high_resolution_clock::now();
+		
+		//~ if constexpr(doDurations) {
+			//~ const auto computeEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tCompute end: " << std::chrono::duration<float,std::milli>(computeEnd - compute).count() << std::endl;
+			//~ const auto solve = std::chrono::high_resolution_clock::now();
+		//~ }
 		const Eigen::Vector<FltPrec,Eigen::Dynamic> b = -F(u);
 		const Eigen::Vector<FltPrec,Eigen::Dynamic> d = solver.solve(b);
 		nanCheck and std::cerr << "\t\tNaN Check 4: " << (-F(u)).hasNaN() << std::endl;
 		nanCheck and std::cerr << "\t\tNaN Check 5: " << d.hasNaN() << std::endl;
-		const auto solveEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tSolve end: " << std::chrono::duration<float,std::milli>(solveEnd - solve).count() << " (" << /*solver.iterations() << " iterations / " << solver.error() << " )" <<*/ std::endl;
-		}
+		
+		//~ if constexpr(doDurations) {
+			//~ const auto solveEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tSolve end: " << std::chrono::duration<float,std::milli>(solveEnd - solve).count() << " (" << /*solver.iterations() << " iterations / " << solver.error() << " )" <<*/ std::endl;
+		//~ }
 		
 		//~ const auto sVector=sFactor*(u-u.cwiseMin(a).cwiseMax(0));
 		//~ const auto [max,maxId] = inftyNorm( sVector );
@@ -751,18 +815,25 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 		if(l2err < 1e-8)//w/o convection/cip: 1e-12
 			break;
 		
-		const auto updateD = std::chrono::high_resolution_clock::now();
+		//~ if constexpr(doDurations) {
+			//~ const auto updateD = std::chrono::high_resolution_clock::now();
+		//~ }
 		u += d;
 		nanCheck and std::cout << "\t\tNaN Check 5: " << u.hasNaN() << std::endl;
-		const auto updateDEnd = std::chrono::high_resolution_clock::now();
-		if constexpr(doDurations) {
-			std::cout << "\t\tUpdate u end: " << std::chrono::duration<float,std::milli>(updateDEnd - updateD).count() << std::endl;
-		}
+		//~ if constexpr(doDurations) {
+			//~ const auto updateDEnd = std::chrono::high_resolution_clock::now();
+			//~ std::cout << "\t\tUpdate u end: " << std::chrono::duration<float,std::milli>(updateDEnd - updateD).count() << std::endl;
+		//~ }
 		if constexpr (doOutput) outputVector<FltPrec>( basis, u, std::ios::app | std::ios::ate, "newton" );
 		if constexpr (doOutput) outputVector<FltPrec>( basis, u.array().min(uKappaU).max(uKappaL), std::ios::app | std::ios::ate, "newton_uplus" );
-		std::cerr << "\tLoop body end" << std::endl;
+		
+		//~ if constexpr(doDurations) {
+			//~ std::cout << "\tLoop body end" << std::endl;
+		//~ }
 	} while( true );
-	std::cerr << "while loop end. " << n << " iterations." << std::endl;
+	const auto newtonEnd = std::chrono::high_resolution_clock::now();
+	std::cerr << "Stopped after " << n << " iterations." << std::endl;
+	std::cerr << "\tTook " << std::chrono::duration<float,std::milli>(newtonEnd-newtonStart).count() << " ms." << std::endl;
 	//~ std::cout << u << std::endl;
 	return u;
 }
@@ -1669,57 +1740,58 @@ int main(int argc, char *argv[])
   const double PI = StandardMathematicalConstants<double>::pi();
   constexpr int Dim = 2;//\Omega\subset\mathbb R^{dim}, \Omega=(0,1)^2 (see below, other sets/dimensions probably wont work, see below or e.g. getSVector)
 
-  //~ const double mu = 1;
-  const double mu = 0;
+  const double mu = 1;
+  //~ const double mu = 0;
   const double eps = 1e-5;
   //~ const double eps = std::atof(argv[5]);
   //~ const double eps = 0.6;
-  const double diffusionInfinityNorm = eps;
+  const double diffusionInfinityNorm = 100*eps;
   //~ const auto diffusion = [eps](const FieldVector<double,Dim>& x) -> const FieldMatrix<double,Dim,Dim> { FieldMatrix<double,Dim,Dim> tmp = {{100,std::cos(x[0])},{std::cos(x[0]),1}}; tmp *= eps; return tmp; };
   const auto diffusion = [eps](const FieldVector<double,Dim>& x) -> const FieldMatrix<double,Dim,Dim> { return {{eps,0},{0,eps}}; };
   //~ const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
   //~ const FieldMatrix<double, Dim, Dim> D = {{0,0},{0,0}};
   //~ const FieldMatrix<double, 2, 2> D = {{eps*2,eps*1},{eps*1,eps*3}};
-  //~ const double betaInfinityNorm = 2;
+  const double betaInfinityNorm = 2;
   //ex. 5.2 (opaper_followup)
   //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {-x[1],x[0]}; };
   //ex. 5.3 (opaper_followup)
-  const double betaInfinityNorm = std::sin(PI/3);
-  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
-  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {2,1}; };
+  //~ const double betaInfinityNorm = std::sin(PI/3);
+  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
+  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {2,1}; };
   //~ const FieldVector<double,Dim> beta = {2,1};
   //~ const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
   //~ const FieldVector<double,Dim> beta = {0,0};
   //~ const FieldVector<double,Dim> beta = {1,0};
   
-  constexpr int LagrangeOrder = 1;
-  using GridMethod = Triangle::Standard;
+  constexpr int LagrangeOrder = 2;
+  using GridMethod = Triangle::NonDelaunay;
   
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (5.0*PI*PI*eps + mu) * sin(2*PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return eps*5*PI*PI*sin(PI*x[0])*sin(PI*x[1])-eps*2*PI*PI*cos(PI*x[0])*cos(PI*x[1])+mu*sin(PI*x[0])*sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 2*PI*cos(PI*x[0])*sin(PI*x[1])+PI*sin(PI*x[0])*cos(PI*x[1]);};
-  //~ #warning "Usage of beta in the sourceTerm only works for constant convection!"
-  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
+  #warning "Usage of beta in the sourceTerm only works for constant convection!"
+  auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return 100*(2*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 100*beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+100*beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
-  auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
+  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return -eps*100*PI*(-std::cos(PI*x[1])*std::sin(PI*x[0])*std::sin(PI*x[0])-(100*std::cos(PI*x[0])*std::sin(x[0])+PI*std::sin(PI*x[0]))*std::sin(PI*x[1])+2*PI*std::cos(x[0])*(std::cos(PI*x[0])*std::cos(PI*x[0])-50*std::sin(PI*x[0])*std::sin(PI*x[1]))) + 100*beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+100*beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1])+mu*100*std::sin(PI*x[0])*std::sin(PI*x[1]);};
+  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
   
 	//~ auto const f = [=] (const auto& coords) { return exp(-std::pow(coords[0]-0.5,2)/0.2-3*std::pow(coords[1]-0.5,2)/0.2); };
-	//~ auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
+	auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
 	//~ auto const f = [=] (const auto& coords) { return std::sin(2*PI*coords[0])*std::sin(PI*coords[1]); };
 	//~ auto const f = [=] (const auto& coords) { return 100*sin(PI*coords[0])*sin(PI*coords[1]); };
-	auto const f = [=] (const auto& coords) { return 0; };
+	//~ auto const f = [=] (const auto& coords) { return 0; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return f(coords) * FieldVector<double,Dim>{-2*(coords[0]-0.5)/0.2,-6*(coords[1]-0.5)/0.2 }; };
-	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
+	auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { PI*std::cos(PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& coords) -> FieldVector<double,Dim> { return { 2*PI*std::cos(2*PI*coords[0])*std::sin(PI*coords[1]), PI*std::sin(2*PI*coords[0])*std::cos(PI*coords[1]) }; };
 	//~ auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 100*PI*std::cos(PI*x[0])*std::sin(PI*x[1]), 100*PI*std::sin(PI*x[0])*std::cos(PI*x[1]) }; };
-	auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 0, 0}; };
+	//~ auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 0, 0}; };
   
-  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
   //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
   //~ const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return x[0]*x[0]+x[1]*x[1] < 0.25 ? 0.5 : 1; };
   //~ const auto kappaL = [=] (const FieldVector<double,2>& x) -> double { return x[0]*x[0]+x[1]*x[1] < 0.25 ? 0 : 0.5; };
-  const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return 1; };
+  //~ const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return 0.5; };
   const auto kappaL = [=] (const FieldVector<double,2>& x) -> double { return 0; };
   
   if( argc < 4 ) {
@@ -1836,7 +1908,7 @@ int main(int argc, char *argv[])
   // Set Dirichlet values
   auto dirichletValues = [](const auto x) -> const double
   {
-    //~ return 0;
+    return 0;
     //ex. 5.2 (opaper_followup)
     //~ if( x[0] < 0.333333 and x[1] < 1e-5) {
 			//~ return 0;
@@ -1848,12 +1920,12 @@ int main(int argc, char *argv[])
 			//~ return 1;
 		//~ }
 		//ex. 5.3 (opaper_followup)
-		if( x[0] < 1e-5 or x[1] > 0.9999) {
-			return 1;
-		}
-		else {
-			return 0;
-		}
+		//~ if( x[0] < 1e-5 or x[1] > 0.9999) {
+			//~ return 1;
+		//~ }
+		//~ else {
+			//~ return 0;
+		//~ }
   };
   Functions::interpolate(basis,b,dirichletValues, dirichletNodes);
     
@@ -1962,11 +2034,8 @@ int main(int argc, char *argv[])
 	const auto OutputMethodBind = [&basis](const auto& u, const std::ios::openmode mode, const std::string filename) { return outputVector<double>( basis, u, mode, filename ); };
 	
 	//Newton-Method
-	const auto newtonStart = std::chrono::high_resolution_clock::now();
 	Eigen::Vector<double,Eigen::Dynamic> eigenU
 		= newtonMethod<double>( basis, stiffnessEigen, RhsEigen, u0, eigenSVector,Diameter, uKappaU, uKappaL, L2NormBind );
-	const auto newtonEnd = std::chrono::high_resolution_clock::now();
-	std::cerr << "\tTook " << std::chrono::duration<float,std::milli>(newtonEnd-newtonStart).count() << " ms." << std::endl;
 	std::cerr << "H = " << H << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
@@ -1977,13 +2046,13 @@ int main(int argc, char *argv[])
 	//~ return 0;
 	
 	//-----------
-	//~ Eigen::Vector<double,Eigen::Dynamic> eigenX = fixedpointMethod( u0, stiffnessEigen, RhsEigen, omega, eigenSVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
+	Eigen::Vector<double,Eigen::Dynamic> eigenX = fixedpointMethod( u0, stiffnessEigen, RhsEigen, omega, eigenSVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
 	
-	//~ std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
-	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
-	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
-	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	//~ std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
 	const auto normalsolution(x);
@@ -2021,7 +2090,7 @@ int main(int argc, char *argv[])
 	}
 	std::cerr << "||Rhs - Auplus - s(uminus)||_\\infty = " << std::get<0>(inftyNorm(tmp2)) << std::endl;
 	
-	//~ Eigen::Vector<double,Eigen::Dynamic> duneXtranscribed = ([](const auto& u){ Eigen::Vector<double,Eigen::Dynamic> tmp(u.size()); for( int i=0; i<u.size();i++ ) tmp[i]=u[i]; return tmp; })(x);
+	Eigen::Vector<double,Eigen::Dynamic> duneXtranscribed = ([](const auto& u){ Eigen::Vector<double,Eigen::Dynamic> tmp(u.size()); for( int i=0; i<u.size();i++ ) tmp[i]=u[i]; return tmp; })(x);
 	//~ std::cerr << "||u^+_eigen - u^+_dune||_L2 = " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix()-duneXtranscribed.array().min(uKappaU).max(uKappaL).matrix() ) << std::endl;
 	
 	return 0;
