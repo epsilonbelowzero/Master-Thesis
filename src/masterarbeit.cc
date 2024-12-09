@@ -92,8 +92,14 @@ int noNnzElements( const VectorImpl& x ) {
 	int n = 0;
 	
 	for( int i = 0; i < x.size(); i++ ) {
-		if( std::abs(x[i]) < std::numeric_limits<typename VectorImpl::value_type>::epsilon() ) {
-			++n;
+		if constexpr( std::is_integral_v<typename VectorImpl::value_type> ) {
+			if( x[i] != 0)
+				++n;
+		}
+		else {
+			if( std::abs(x[i]) < std::numeric_limits<typename VectorImpl::value_type>::epsilon() ) {
+				++n;
+			}
 		}
 	}
 	
@@ -698,7 +704,7 @@ Eigen::Vector<FltPrec,Eigen::Dynamic> newtonMethod(
 	constexpr bool nanCheck = false;
 	constexpr bool conditionNumberCheck = false;
 	constexpr bool solveableCheck = false;
-	constexpr bool doOutput = false;
+	constexpr bool doOutput = true;
 	constexpr bool doDurations = false;
 	
 	std::cerr << "Newton method" << std::endl;
@@ -1740,41 +1746,41 @@ int main(int argc, char *argv[])
   const double PI = StandardMathematicalConstants<double>::pi();
   constexpr int Dim = 2;//\Omega\subset\mathbb R^{dim}, \Omega=(0,1)^2 (see below, other sets/dimensions probably wont work, see below or e.g. getSVector)
 
-  const double mu = 1;
-  //~ const double mu = 0;
+  //~ const double mu = 1;
+  const double mu = 0;
   const double eps = 1e-5;
   //~ const double eps = std::atof(argv[5]);
   //~ const double eps = 0.6;
-  const double diffusionInfinityNorm = 100*eps;
+  const double diffusionInfinityNorm = eps;
   //~ const auto diffusion = [eps](const FieldVector<double,Dim>& x) -> const FieldMatrix<double,Dim,Dim> { FieldMatrix<double,Dim,Dim> tmp = {{100,std::cos(x[0])},{std::cos(x[0]),1}}; tmp *= eps; return tmp; };
   const auto diffusion = [eps](const FieldVector<double,Dim>& x) -> const FieldMatrix<double,Dim,Dim> { return {{eps,0},{0,eps}}; };
   //~ const FieldMatrix<double, Dim, Dim> D = {{eps,0},{0,eps}};
   //~ const FieldMatrix<double, Dim, Dim> D = {{0,0},{0,0}};
   //~ const FieldMatrix<double, 2, 2> D = {{eps*2,eps*1},{eps*1,eps*3}};
-  const double betaInfinityNorm = 2;
+  const double betaInfinityNorm = 1;
   //ex. 5.2 (opaper_followup)
-  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {-x[1],x[0]}; };
+  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {-x[1],x[0]}; };
   //ex. 5.3 (opaper_followup)
   //~ const double betaInfinityNorm = std::sin(PI/3);
   //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {std::cos(PI/3),std::sin(PI/3)}; };
-  const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {2,1}; };
+  //~ const auto beta = [=](const FieldVector<double,Dim>& x) -> const FieldVector<double,Dim> { return {2,1}; };
   //~ const FieldVector<double,Dim> beta = {2,1};
   //~ const FieldVector<double,Dim> beta = {std::atof(argv[5]),0.5*std::atof(argv[5])};
   //~ const FieldVector<double,Dim> beta = {0,0};
   //~ const FieldVector<double,Dim> beta = {1,0};
   
-  constexpr int LagrangeOrder = 2;
-  using GridMethod = Triangle::NonDelaunay;
+  constexpr int LagrangeOrder = 1;
+  using GridMethod = Triangle::Standard;
   
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (5.0*PI*PI*eps + mu) * sin(2*PI*x[0]) * sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return eps*5*PI*PI*sin(PI*x[0])*sin(PI*x[1])-eps*2*PI*PI*cos(PI*x[0])*cos(PI*x[1])+mu*sin(PI*x[0])*sin(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 2*PI*cos(PI*x[0])*sin(PI*x[1])+PI*sin(PI*x[0])*cos(PI*x[1]);};
   #warning "Usage of beta in the sourceTerm only works for constant convection!"
-  auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
+  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return (2.0*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return 100*(2*PI*PI*eps + mu) * sin(PI*x[0]) * sin(PI*x[1]) + 100*beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+100*beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1]);};
   //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x) -> const double {return -eps*100*PI*(-std::cos(PI*x[1])*std::sin(PI*x[0])*std::sin(PI*x[0])-(100*std::cos(PI*x[0])*std::sin(x[0])+PI*std::sin(PI*x[0]))*std::sin(PI*x[1])+2*PI*std::cos(x[0])*(std::cos(PI*x[0])*std::cos(PI*x[0])-50*std::sin(PI*x[0])*std::sin(PI*x[1]))) + 100*beta({0,0})[0]*PI*cos(PI*x[0])*sin(PI*x[1])+100*beta({0,0})[1]*PI*sin(PI*x[0])*cos(PI*x[1])+mu*100*std::sin(PI*x[0])*std::sin(PI*x[1]);};
-  //~ auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
+  auto const sourceTerm = [=](const FieldVector<double,Dim>& x){return 0;};
   
 	//~ auto const f = [=] (const auto& coords) { return exp(-std::pow(coords[0]-0.5,2)/0.2-3*std::pow(coords[1]-0.5,2)/0.2); };
 	auto const f = [=] (const auto& coords) { return std::sin(PI*coords[0])*std::sin(PI*coords[1]); };
@@ -1787,11 +1793,12 @@ int main(int argc, char *argv[])
 	//~ auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 100*PI*std::cos(PI*x[0])*std::sin(PI*x[1]), 100*PI*std::sin(PI*x[0])*std::cos(PI*x[1]) }; };
 	//~ auto const Df = [=](const auto& x) -> FieldVector<double,Dim> { return { 0, 0}; };
   
-  const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return std::pow(coords[0]-0.5,2)+std::pow(coords[1]-0.5,2); };
+  //~ const auto kappaU = [=] (const FieldVector<double,2>& coords) { return 0.25*std::sin(4*PI*coords[0])*std::sin(4*PI*coords[1])+0.5; };
   //~ const auto kappaL = [=] (const FieldVector<double,2>& coords) { return -std::pow(coords[0]-0.5,2)-std::pow(coords[1]-0.5,2); };
   //~ const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return x[0]*x[0]+x[1]*x[1] < 0.25 ? 0.5 : 1; };
   //~ const auto kappaL = [=] (const FieldVector<double,2>& x) -> double { return x[0]*x[0]+x[1]*x[1] < 0.25 ? 0 : 0.5; };
-  //~ const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return 0.5; };
+  const auto kappaU = [=] (const FieldVector<double,2>& x) -> double { return 1; };
   const auto kappaL = [=] (const FieldVector<double,2>& x) -> double { return 0; };
   
   if( argc < 4 ) {
@@ -1878,9 +1885,9 @@ int main(int argc, char *argv[])
   // comply with a given predicate.
   auto predicate = [](const auto x)
   {
-		const bool ret = 1e-5 > x[0] || x[0] > 0.99999 || 1e-5 > x[1] || x[1] > 0.99999; //everywhere
-		//ex. 5.2
-		//~ const bool ret = x[0] > 0.99999 || 1e-5 > x[1];
+	//~ const bool ret = 1e-5 > x[0] || x[0] > 0.99999 || 1e-5 > x[1] || x[1] > 0.99999; //everywhere
+	//ex. 5.2
+	const bool ret = x[0] > 0.99999 || 1e-5 > x[1];
     return ret;
   };
 
@@ -1908,17 +1915,17 @@ int main(int argc, char *argv[])
   // Set Dirichlet values
   auto dirichletValues = [](const auto x) -> const double
   {
-    return 0;
+    //~ return 0;
     //ex. 5.2 (opaper_followup)
-    //~ if( x[0] < 0.333333 and x[1] < 1e-5) {
-			//~ return 0;
-		//~ }
-		//~ else if ( 0.333333 < x[0] and x[0] < 0.6666667 and x[1] < 1e-5) {
-			//~ return 0.5;
-		//~ }
-		//~ else {
-			//~ return 1;
-		//~ }
+    if( x[0] < 0.333333 and x[1] < 1e-5) {
+		return 0;
+	}
+	else if ( 0.333333 < x[0] and x[0] < 0.6666667 and x[1] < 1e-5) {
+		return 0.5;
+	}
+	else {
+		return 1;
+	}
 		//ex. 5.3 (opaper_followup)
 		//~ if( x[0] < 1e-5 or x[1] > 0.9999) {
 			//~ return 1;
@@ -2042,17 +2049,51 @@ int main(int argc, char *argv[])
 	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
+	//~ {
+		//~ Eigen::Vector<double,Eigen::Dynamic> tmp(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix());
+		
+		//~ auto predicate = [](const auto x)
+		//~ {
+		//~ const bool ret = 1e-5 > x[0] || x[0] > 0.99999 || 1e-5 > x[1] || x[1] > 0.99999; //everywhere
+		//~ return ret ? 1 : 0;
+		//~ };
+
+		//~ // Evaluating the predicate will mark all Dirichlet degrees of freedom
+		//~ std::vector<int> boundaryNodes;
+		//~ Functions::interpolate(basis, boundaryNodes, predicate);
+		
+		//~ int abc = 0;
+		//~ for(int i =0; i < tmp.size(); i++) {
+			//~ if( dirichletNodes[i] )
+				//~ abc++;
+		//~ }
+		
+		//~ const int NoBoundaryNodes = tmp.size() - noNnzElements(boundaryNodes);
+		//~ const int NoNonzeroNodes = noNnzElements(tmp);
+		//~ std::cerr << tmp.size() << std::endl;
+		//~ std::cerr << NoBoundaryNodes << " vs. " << abc << std::endl;
+		//~ std::cerr << "No inner non-zero nodes u^-: " << NoNonzeroNodes << " of total " << (tmp.size() - NoBoundaryNodes) << " nodes, i.e." << (100*static_cast<double>(NoNonzeroNodes)/(tmp.size() - NoBoundaryNodes)) << "%." << std::endl;
+		
+		//~ Eigen::Vector<double,Eigen::Dynamic> tmp2((eigenSVector.array()*tmp.array()).matrix());
+		//~ const auto [max,maxId] = inftyNorm( tmp2 );
+		//~ const auto [maxB,maxIdB] = inftyNorm(RhsEigen);
+		//~ std::cerr << "value s-Vector vs. rhs: " << max << " vs. " << maxB << ", i.e. " << (100*max / maxB) << "%" << std::endl;
+		//~ const auto [maxU,maxUId] = inftyNorm( eigenU );
+		//~ const auto [maxUPlus,maxUPlusID] = inftyNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix());
+		//~ std::cerr  << "u values, u vs u^+: " << maxU << " vs. " << maxUPlus << ", i.e. " << (100.0*maxUPlus / maxU) << "%." << std::endl;
+	//~ }
+	
 	//~ //for newton-only testing
 	//~ return 0;
 	
 	//-----------
-	Eigen::Vector<double,Eigen::Dynamic> eigenX = fixedpointMethod( u0, stiffnessEigen, RhsEigen, omega, eigenSVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
+	//~ Eigen::Vector<double,Eigen::Dynamic> eigenX = fixedpointMethod( u0, stiffnessEigen, RhsEigen, omega, eigenSVector, Diameter, uKappaU, uKappaL, L2NormBind, OutputMethodBind );
 	
-	std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
 	const auto normalsolution(x);
