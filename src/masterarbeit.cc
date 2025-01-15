@@ -334,11 +334,75 @@ bool localOmegaAdaption( FltPrec& localOmega, const FltPrec errOld, const FltPre
 	//~ return result;
 //~ }
 
+template < class Element, class FltPrec, class ReturnType, int DomainDim >
+FltPrec getApproxMaximumNorm(
+						const Element& element,
+						const std::function<ReturnType(const Dune::FieldVector<FltPrec,DomainDim>)> f
+)
+{
+	//~ constexpr int DomainDim = Element::dimension;
+	//DomainDim == Element::dimension or Element::dimensionworld for elements / intersections
+	
+	//calculate the maximum depending on the function f:
+	// - scalar function: absolute value of the result at pos x
+	// - vector valued function: maximum of the absolute values at pos x
+	// - matrix valued function: maximum of the absolute values of all matrix element at pos x
+	const auto calcMaxAtPosition = [&f](const Dune::FieldVector<FltPrec,DomainDim> x) -> FltPrec {
+		const ReturnType result = f(x);
+		
+		FltPrec ret = {0};
+		if constexpr (std::is_integral_v<ReturnType> or std::is_floating_point_v<ReturnType> ) {
+			ret = std::max(ret,std::abs(result));
+		}
+		else if constexpr(std::is_same_v<ReturnType,Dune::FieldVector<FltPrec,DomainDim> >) {
+			for( int i=0; i < DomainDim; i++ ) {
+				ret = std::max(ret,std::abs(result[i]));
+			}
+		}
+		else if constexpr(std::is_same_v<ReturnType,Dune::FieldMatrix<FltPrec,DomainDim,DomainDim> >) {
+			for( int i=0; i < DomainDim; i++ ) {
+				for( int j=0; j < DomainDim; j++ ) {
+					ret = std::max(ret,std::abs(result[i][j]));
+				}
+			}
+		}
+		
+		return ret;
+	};
+
+	// A quadrature rule, maybe use localView.tree().finiteElement().localBasis().order()
+	//high order for approximation of the infinity norm L^\infty
+	const int order = 5;
+	//Element::mydimension = 1 for intersections, = 2 for simplices
+	const auto& quadRule = Dune::QuadratureRules<FltPrec, Element::mydimension>::rule(element.type(), order);
+	
+	FltPrec returnVal = {0};
+	
+	for (const auto& quadPoint : quadRule) {
+		// Position of the current quadrature point in the reference element
+		//this is 1d for intersection and 2d for elements
+		//~ const Dune::FieldVector<FltPrec,DomainDim> quadPos = quadPoint.position();
+		//~ const Dune::FieldVector<FltPrec,DomainDim> globalPos = element.geometry().global(quadPos);
+		const Dune::FieldVector<FltPrec,DomainDim> globalPos = element.geometry().global(quadPoint.position());
+		
+		returnVal = std::max(returnVal, calcMaxAtPosition(globalPos) );
+	}
+	
+	//have a look at the corners too
+	for( int i=0; i < element.geometry().corners(); i++ ) {
+		returnVal = std::max(returnVal, calcMaxAtPosition(element.geometry().corner(i)));
+	}
+	
+	return returnVal;
+}
+
 template < class Basis >
 Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	const Basis& basis, 
-	const typename Basis::GridView::ctype diffusionInfinityNorm,
-	const typename Basis::GridView::ctype betaInfinityNorm,
+	const std::function<Dune::FieldMatrix<typename Basis::GridView::ctype,Basis::GridView::dimension,Basis::GridView::dimension>(const Dune::FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>)> diffusionTensor,
+	const std::function<Dune::FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>(const Dune::FieldVector<typename Basis::GridView::ctype,Basis::GridView::dimension>)> convectiveFlow,
+	const typename Basis::GridView::ctype /*diffusionInfinityNorm*/,
+	const typename Basis::GridView::ctype /*betaInfinityNorm*/,
 	const typename Basis::GridView::ctype mu)
 {
 	//generate the s-Vector in 3 steps:
@@ -355,6 +419,7 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	Dune::BlockVector<FltPrec> xVals, yVals; //save x/y coordinate for lagrange node i
 	Dune::Functions::interpolate(basis,xVals,[](auto x) { return x[0]; });
 	Dune::Functions::interpolate(basis,yVals,[](auto x) { return x[1]; });
+	Dune::BlockVector<FltPrec> D_omega_i(basis.dimension()), beta_omega_i(basis.dimension());
 	
 	Dune::BlockVector<FltPrec> result(basis.dimension());
 	std::vector<int> noParticipatingElems(basis.dimension());//no=Number; needed for average calculation
@@ -373,14 +438,21 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 	for( const auto& elem : elements(basis.gridView()) ) {
 		localView.bind(elem);
 		
+		const FltPrec infinity_D_omega_i = getApproxMaximumNorm(elem,diffusionTensor);
+		const FltPrec infinity_beta_omega_i = getApproxMaximumNorm(elem,convectiveFlow);
+		
 		const FltPrec diam = diameter(elem.geometry());
 		int noCornersDetected = 0;
 		for( int i=0; i < localView.size(); i++ ) {
+			const int globalID = localView.index(i);
 			
-			const auto localCoord = elem.geometry().local({xVals[localView.index(i)], yVals[localView.index(i)]});
+			D_omega_i[globalID] = std::max(D_omega_i[globalID],infinity_D_omega_i);
+			beta_omega_i[globalID] = std::max(beta_omega_i[globalID],infinity_beta_omega_i);
+			
+			const auto localCoord = elem.geometry().local({xVals[globalID], yVals[globalID]});
 			if( isCorner(localCoord[0],localCoord[1]) ) {
-				result[localView.index(i)] += diam;
-				noParticipatingElems[localView.index(i)]++;
+				result[globalID] += diam;
+				noParticipatingElems[globalID]++;
 				
 				noCornersDetected++;
 			}
@@ -393,7 +465,8 @@ Dune::BlockVector<typename Basis::GridView::ctype> getSVector(
 		if(noParticipatingElems[i] == 0) continue; //skip Lagrange nodes that are no mesh nodes
 		
 		const FltPrec h_i = result[i] / noParticipatingElems[i];
-		result[i] = diffusionInfinityNorm + h_i * betaInfinityNorm + h_i * h_i * mu;
+		//~ result[i] = diffusionInfinityNorm + h_i * betaInfinityNorm + h_i * h_i * mu;
+		result[i] = D_omega_i[i] + h_i * beta_omega_i[i] + h_i * h_i * mu;
 	}
 	
 	//step 3
@@ -992,12 +1065,20 @@ FltPrec L2Norm( GridView gridView, LocalView localView, const VectorImpl u,
 template < typename VectorImpl, typename FltPrec > requires IsEnumeratable<VectorImpl>
 FltPrec sNorm(
 	const VectorImpl& u,
-	const FltPrec diffusionInfinityNorm,
-	const FltPrec betaInfinityNorm,
-	const FltPrec mu,
-	const FltPrec H)
+	const Dune::BlockVector<FltPrec>& sVector,
+	const FltPrec,
+	const FltPrec,
+	const FltPrec,
+	const FltPrec)
 {
-	return std::sqrt((diffusionInfinityNorm + betaInfinityNorm * H + mu * H * H) * u.dot(u));
+	FltPrec result{0};
+	
+	for( int i=0; i < u.size(); i++ ) {
+		result += sVector[i] * u[i] * u[i];
+	}
+	
+	return result;
+	//~ return std::sqrt((diffusionInfinityNorm + betaInfinityNorm * H + mu * H * H) * u.dot(u));
 }
 
 template < typename FltPrec, int Dim >
@@ -1069,6 +1150,7 @@ using namespace Dune;
 template < class Basis >
 void addCIP(const Basis& basis,
 						BCRSMatrix<typename Basis::GridView::ctype>& stiffnessMatrix,
+						const std::function<Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>(const Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>)> beta,
 						const typename Basis::GridView::ctype betaInfinityNorm,
 						const typename Basis::GridView::ctype gamma)
 {
@@ -1077,7 +1159,7 @@ void addCIP(const Basis& basis,
 	const auto action = [&stiffnessMatrix](const int globalI,const int globalJ, const FltPrec contrib) {
 		stiffnessMatrix[globalI][globalJ] += contrib;
 	};
-	addCIPImpl(basis,action,betaInfinityNorm,gamma);
+	addCIPImpl(basis,action,beta,betaInfinityNorm,gamma);
 }
 
 template < class Basis, typename VectorImpl > requires IsEnumeratable<VectorImpl>
@@ -1089,6 +1171,7 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 												)
 											> diffusion,
 								const typename Basis::GridView::ctype diffusionInfinityNorm,
+								const std::function<Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>(const Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>)> beta,
 								const typename Basis::GridView::ctype betaInfinityNorm,
 								const typename Basis::GridView::ctype mu,
 								const typename Basis::GridView::ctype gamma,
@@ -1104,7 +1187,7 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 	const auto action = [&u,&result](const int globalI,const int globalJ, const FltPrec contrib) {
 		result += u[globalI] * u[globalJ] * contrib;
 	};
-	addCIPImpl(basis,action,betaInfinityNorm,gamma);
+	addCIPImpl(basis,action,beta,betaInfinityNorm,gamma);
 
 	if( result < 0 and std::abs(result) < std::numeric_limits<float>::epsilon() ) {
 		result = std::abs(result);
@@ -1116,14 +1199,18 @@ typename Basis::GridView::ctype cipNorm(	const Basis& basis,
 template < class Basis >
 void addCIPImpl(const Basis& basis,
 						const std::function<void(const int,const int,const typename Basis::GridView::ctype)> action,
+						const std::function<Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>(const Dune::FieldVector<typename Basis::GridView::ctype, Basis::GridView::dimension>)> beta,
 						const typename Basis::GridView::ctype betaInfinityNorm,
 						const typename Basis::GridView::ctype gamma)
 {
 	using FltPrec = typename Basis::GridView::ctype;
 	constexpr int DomainDim = Basis::GridView::dimension;
 	
-	const auto evaluateIntegrand = [gamma,betaInfinityNorm](const FltPrec h_F, const FieldVector<FltPrec,DomainDim> diffIn, const FieldVector<FltPrec,DomainDim> diffOut) -> FltPrec {
-		return gamma *betaInfinityNorm * (h_F*h_F) * (diffIn*diffOut);
+	const auto evaluateIntegrand = [gamma,betaInfinityNorm,beta](const FltPrec h_F, const FieldVector<FltPrec,DomainDim> diffIn, const FieldVector<FltPrec,DomainDim> diffOut, const auto intersection) -> FltPrec {
+		const FltPrec betaInfNormF = getApproxMaximumNorm(intersection,beta);
+		//~ std::cout << std::is_same_v<decltype(intersection.geometry().global({0.5})),Dune::FieldVector<double,2> > << std::endl;
+		//~ return gamma *betaInfinityNorm * (h_F*h_F) * (diffIn*diffOut);
+		return gamma *betaInfNormF * (h_F*h_F) * (diffIn*diffOut);
 	};
 	
 	const auto gridView = basis.gridView();
@@ -1234,7 +1321,7 @@ void addCIPImpl(const Basis& basis,
 							diffOut += gradientsIn[localIIndexOfJ];
 						}
 						
-						auto contribution = evaluateIntegrand(h_F,diffIn,diffOut) * integrationElement * quadPoint.weight();
+						auto contribution = evaluateIntegrand(h_F,diffIn,diffOut,intersection) * integrationElement * quadPoint.weight();
 						if( localIIndexOfJ != -1 && localJIndexOfI != -1 ) {
 							//extra case 2
 							//symmetry: if global basis functions are on the intersection, the contribution would be doubled when the inverse case is considered
@@ -1260,7 +1347,7 @@ void addCIPImpl(const Basis& basis,
 						const auto diffIn = gradientsIn[localI1];
 						const auto diffOut = gradientsIn[localI2];
 						
-						action(globalI1,globalI2, evaluateIntegrand(h_F,diffIn,diffOut) * integrationElement * quadPoint.weight() );
+						action(globalI1,globalI2, evaluateIntegrand(h_F,diffIn,diffOut,intersection) * integrationElement * quadPoint.weight() );
 					}
 				}
 			}
@@ -1870,7 +1957,7 @@ int main(int argc, char *argv[])
   
   std::cout << "Testing getSVector:" << std::endl;
   const auto sVectorStart = std::chrono::high_resolution_clock::now();
-  const auto sVector = getSVector( basis, diffusionInfinityNorm, betaInfinityNorm, mu );
+  const auto sVector = getSVector( basis, diffusion, beta, diffusionInfinityNorm, betaInfinityNorm, mu );
   const auto sVectorEnd = std::chrono::high_resolution_clock::now();
   const auto uniformityCheck = [](const BlockVector<double>& vec) { bool result=true; for(int i=1;i<vec.size();i++) { if(std::abs(vec[i]-vec[i-1])>=1e-5) { result=false;break;}} return result;};
   std::cout << "\tTest 1: max element vs. Diameter: " << *std::max_element(sVector.begin(),sVector.end()) << " vs. " << (Diameter*Diameter*mu+Diameter*betaInfinityNorm+diffusionInfinityNorm) << std::endl;
@@ -1883,7 +1970,7 @@ int main(int argc, char *argv[])
   std::cerr << "Assemble Problem End" << std::endl;
   
   const auto stiffnessMatrixBeforeCIP = std::get<0>(transcribeDuneToEigen( stiffnessMatrix, b, 85 ));
-  addCIP(basis,stiffnessMatrix,betaInfinityNorm,gamma);
+  addCIP(basis,stiffnessMatrix,beta,betaInfinityNorm,gamma);
 	const auto stiffnessMatrixAfterCIP = std::get<0>(transcribeDuneToEigen( stiffnessMatrix, b, 85 ));
 
   // Determine Dirichlet dofs by marking all degrees of freedom whose Lagrange nodes
@@ -2051,8 +2138,8 @@ int main(int argc, char *argv[])
 	std::cerr << "H = " << H << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
 	std::cerr << "(Newton|Eigen) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^+-f||_CIP = " << cipNorm( basis, eigenU.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, beta,betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Newton|Eigen) ||u^-||_s = " << sNorm(eigenU - eigenU.array().min(uKappaU).max(uKappaL).matrix(), sVector, diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	{
 		outputVector<double>(basis,eigenU,std::ios::trunc,"newton_u");
@@ -2123,7 +2210,7 @@ int main(int argc, char *argv[])
 	//~ std::cerr << "(Richard|Eigen) ||eigenX-f||: h = " << H << ", " << L2Norm<double>( gridView, basis.localView(), eigenX, f) << std::endl;
 	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_L2: " << L2Norm<double>( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), f) << std::endl;
 	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_A = " << ANorm( gridView, basis.localView(), eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion, diffusionInfinityNorm, mu, f, Df ) << std::endl;
-	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	//~ std::cerr << "(Richard|Eigen) ||eigen u^+-f||_CIP = " << cipNorm( basis, eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusion,diffusionInfinityNorm, beta,betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
 	//~ std::cerr << "(Richard|Eigen) ||eigen u^-||_s = " << sNorm(eigenX - eigenX.array().min(uKappaU).max(uKappaL).matrix(), diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	//-----------
@@ -2157,8 +2244,8 @@ int main(int argc, char *argv[])
 	
 	std::cerr << "(Richard|Dune) ||u^+-u_0||_A = " << ANormMaybeWorking( stiffnessMatrix, tmp) << std::endl;
 	std::cerr << "(Richard|Dune) ||u^+-f||_A = " << ANorm( gridView, basis.localView(), uplus, diffusion,diffusionInfinityNorm, mu, f, Df ) << std::endl;
-	std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, diffusion,diffusionInfinityNorm, betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
-	std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^+-f||_CIP = " << cipNorm( basis, uplus, diffusion,diffusionInfinityNorm, beta,betaInfinityNorm, mu, gamma, f, Df ) << std::endl;
+	std::cerr << "(Richard|Dune) ||u^-||_s = " << sNorm(uminus, sVector, diffusionInfinityNorm,betaInfinityNorm,mu,Diameter) << std::endl;
 	
 	BlockVector<double> tmp2(Rhs), tmp3(Rhs.size());
 	stiffnessMatrix.mv(uplus, tmp3);
